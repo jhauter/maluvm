@@ -7,7 +7,7 @@ pub enum Op {
     Jmp,
     JmpIf,
     Branch,
-    BranchIf, 
+    BranchIf,
     LocalGet(u8),
     LocalSet(u8),
     LocalTee(u8),
@@ -45,8 +45,7 @@ pub enum Op {
     Extend16_32s,
     Extend8_32u,
     Extend16_32u,
-
-}   
+}
 
 impl std::fmt::Display for Op {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -62,21 +61,21 @@ impl std::fmt::Display for Op {
             Op::LocalGet(i) => write!(f, "local_get {:x}", i),
             Op::LocalSet(i) => write!(f, "local_set {:x}", i),
             Op::LocalTee(i) => write!(f, "local_tee {:x}", i),
-            Op::GlobalGet(i) =>write!(f, "global_get {:x}", i),
-            Op::GlobalSet(i) =>write!(f, "global_set {:x}", i),
-            Op::GlobalTee(i) =>write!(f, "global_tee {:x}", i),
-            Op::Eq =>   write!(f, "eq"),
-            Op::Eqz =>  write!(f, "eqz"),
-            Op::Add =>  write!(f, "add"),
-            Op::Sub =>  write!(f, "sub"),
+            Op::GlobalGet(i) => write!(f, "global_get {:x}", i),
+            Op::GlobalSet(i) => write!(f, "global_set {:x}", i),
+            Op::GlobalTee(i) => write!(f, "global_tee {:x}", i),
+            Op::Eq => write!(f, "eq"),
+            Op::Eqz => write!(f, "eqz"),
+            Op::Add => write!(f, "add"),
+            Op::Sub => write!(f, "sub"),
             Op::Divs => write!(f, "div_s"),
             Op::Divu => write!(f, "div_u"),
-            Op::Mul =>  write!(f, "mul"),
-            Op::Neg =>  write!(f, "neg"),
-            Op::Gt =>   write!(f, "gt"),
-            Op::Lt =>   write!(f, "lt"),
-            Op::Ge =>   write!(f, "ge"),
-            Op::Le =>   write!(f, "le"),
+            Op::Mul => write!(f, "mul"),
+            Op::Neg => write!(f, "neg"),
+            Op::Gt => write!(f, "gt"),
+            Op::Lt => write!(f, "lt"),
+            Op::Ge => write!(f, "ge"),
+            Op::Le => write!(f, "le"),
             Op::Shiftr => write!(f, "shiftr"),
             Op::Shiftl => write!(f, "shiftl"),
             Op::Call => write!(f, "call"),
@@ -84,19 +83,16 @@ impl std::fmt::Display for Op {
             Op::HeapStore8(off) => write!(f, "heap_store_8 {:x}", off),
             Op::HeapStore16(off) => write!(f, "heap_store_16 {:x}", off),
             Op::HeapStore32(off) => write!(f, "heap_store_32 {:x}", off),
-            Op::Load8u(off) =>  write!(f, "load_8_u {:x}", off),
-            Op::Load8s(off) =>  write!(f, "load_8_s {:x}", off),
+            Op::Load8u(off) => write!(f, "load_8_u {:x}", off),
+            Op::Load8s(off) => write!(f, "load_8_s {:x}", off),
             Op::Load16s(off) => write!(f, "load_16_s {:x}", off),
             Op::Load16u(off) => write!(f, "load_16_u {:x}", off),
             Op::Load32s(off) => write!(f, "load_32_s {:x}", off),
             Op::Load32u(off) => write!(f, "load_32_u {:x}", off),
-            Op::Extend8_32s =>  write!(f, "extend_8_32_s"),
+            Op::Extend8_32s => write!(f, "extend_8_32_s"),
             Op::Extend16_32s => write!(f, "extend_16_32_s"),
-            Op::Extend8_32u =>  write!(f, "extend_8_32_u"),
+            Op::Extend8_32u => write!(f, "extend_8_32_u"),
             Op::Extend16_32u => write!(f, "extend_16_32_u"),
         }
     }
 }
-
-
-
