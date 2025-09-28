@@ -329,6 +329,14 @@ pub fn parse<'src>(code: &'src str) -> Result<ParseState<'src>, AssembleError<'s
                     state.labels.insert(label.0.name, label.0.position);
                     rest = label.1;
                 }
+                Some('#') => {
+                    let statement = slice_until(&state, &r[1..], ';')?;
+                    println!("{:?}", statement.rest);
+                    let arg = parse_arg(&state, statement.word)?; 
+                    state.ops.push(Op::Const(arg.get_numeric(&state)));
+                     
+                    rest = statement.rest;
+                }
                 Some(_) => {
                     let op_res = parse_op(&state, r)?;
                     state.op_size_bytes += op_res.0.size_bytes() as usize;
@@ -420,14 +428,14 @@ mod tests {
 
             :label:
             const @label;
-            const @blub;
-            const .label;
+            #@blub; #.label;
+            #100;
             jmp;     
         ";
         let ops = parse(code).unwrap().ops;
         assert_eq!(ops[3], Op::Const(3));
         assert_eq!(ops[4], Op::Const(0));
         assert_eq!(ops[5], Op::Const(2));
-
+        assert_eq!(ops[6], Op::Const(100));
     }
 }
