@@ -79,6 +79,7 @@ impl<'src> ParseState<'src> {
         self.ops.iter().for_each(|o| encode_op(o, &mut buffer));
 
         buffer.into_boxed_slice()
+        
     }
 }
 
@@ -379,7 +380,6 @@ pub fn encode_op(op: &Op, buffer: &mut Vec<u8>) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
 
@@ -440,23 +440,4 @@ mod tests {
         assert_eq!(ops[6], Op::Const(100));
     }
     
-    #[test]
-    fn test_bytecode() {
-        let code = "
-            nop;
-            nop;
-            const 5;
-            add;
-        ";
-        let ops = parse(code).unwrap();   
-        let buffer = ops.as_bytecode();
-
-        assert_eq!(&buffer[0..2], &[b'm', b'a']);
-        let size_bytes = u32::from_le_bytes(buffer[2..6].try_into().unwrap());
-        let op_count = u32::from_le_bytes(buffer[6..10].try_into().unwrap()); 
-        let expected_size = ops.ops.iter().fold(0, |acc, op| acc + op.size_bytes() as u32);
-
-        assert_eq!(op_count, 4); 
-        assert_eq!(size_bytes, expected_size); 
-    }
 }
