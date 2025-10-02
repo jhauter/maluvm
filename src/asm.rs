@@ -1,9 +1,8 @@
+use crate::op::Op;
 use std::{
     collections::HashMap,
     num::{ParseIntError, TryFromIntError},
 };
-
-use crate::op::Op;
 
 pub enum Statement {
     Op(Op),
@@ -65,12 +64,12 @@ pub struct ParseState<'src> {
     line: usize,
     labels: HashMap<&'src str, usize>,
 }
-impl<'src> ParseState<'src> {
+impl<'src, 'bump> ParseState<'src> {
     pub fn as_bytecode(&self) -> Box<[u8]> {
         let header: [u8; _] = [b'm', b'a'];
         let buffer_size = self.op_size_bytes + size_of_val(&header) + (size_of::<u32>() * 2);
-        
-        let mut buffer = Vec::with_capacity(buffer_size);  
+
+        let mut buffer = Vec::with_capacity(buffer_size);
 
         buffer.extend_from_slice(&header);
         buffer.extend_from_slice(&(self.op_size_bytes as u32).to_le_bytes());
@@ -286,6 +285,7 @@ pub fn parse_op<'src>(
         "extend_16_32_s" => Ok(Op::Extend16_32s),
         "extend_8_32_u" => Ok(Op::Extend8_32u),
         "extend_16_32_u" => Ok(Op::Extend16_32u),
+        "end" => Ok(Op::End),
         _ => Err(AssembleError::new(
             state,
             AssembleErrorKind::UnknownOperation,
@@ -331,12 +331,12 @@ pub fn parse<'src>(code: &'src str) -> Result<ParseState<'src>, AssembleError<'s
                 Some('#') => {
                     let statement = slice_until(&state, &r[1..], ';')?;
                     println!("{:?}", statement.rest);
-                    let arg = parse_arg(&state, statement.word)?; 
+                    let arg = parse_arg(&state, statement.word)?;
                     state.ops.push(Op::Const(arg.get_numeric(&state)));
-                     
+
                     rest = statement.rest;
                 }
-                
+
                 Some(_) => {
                     let op_res = parse_op(&state, r)?;
                     state.op_size_bytes += op_res.0.size_bytes() as usize;
@@ -378,7 +378,6 @@ pub fn encode_op(op: &Op, buffer: &mut Vec<u8>) {
         _ => {}
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -439,7 +438,7 @@ mod tests {
         assert_eq!(ops[5], Op::Const(2));
         assert_eq!(ops[6], Op::Const(100));
     }
-    
+
     #[test]
     fn test_bytecode() {
         let code = "
@@ -448,15 +447,18 @@ mod tests {
             const 5;
             add;
         ";
-        let ops = parse(code).unwrap();   
+        let ops = parse(code).unwrap();
         let buffer = ops.as_bytecode();
 
         assert_eq!(&buffer[0..2], &[b'm', b'a']);
         let size_bytes = u32::from_le_bytes(buffer[2..6].try_into().unwrap());
-        let op_count = u32::from_le_bytes(buffer[6..10].try_into().unwrap()); 
-        let expected_size = ops.ops.iter().fold(0, |acc, op| acc + op.size_bytes() as u32);
+        let op_count = u32::from_le_bytes(buffer[6..10].try_into().unwrap());
+        let expected_size = ops
+            .ops
+            .iter()
+            .fold(0, |acc, op| acc + op.size_bytes() as u32);
 
-        assert_eq!(op_count, 4); 
-        assert_eq!(size_bytes, expected_size); 
+        assert_eq!(op_count, 4);
+        assert_eq!(size_bytes, expected_size);
     }
 }

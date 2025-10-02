@@ -48,6 +48,7 @@ pub enum Op {
     Extend16_32s,
     Extend8_32u,
     Extend16_32u,
+    End,
 }
 
 impl std::fmt::Display for Op {
@@ -99,6 +100,7 @@ impl std::fmt::Display for Op {
             Op::And => write!(f, "and"),
             Op::Or => write!(f, "or"),
             Op::Xor => write!(f, "xor"),
+            Op::End => write!(f, "end"),
         }
     }
 }
@@ -152,21 +154,27 @@ impl Op {
             Op::Extend16_32s => 0x2d,
             Op::Extend8_32u => 0x2e,
             Op::Extend16_32u => 0x2f,
+            Op::End => 0x30,
         }
     }
     pub fn size_bytes(&self) -> u8 {
         match self {
-            Op::LocalGet(_) | Op::LocalSet(_) | Op::LocalTee(_) | Op::GlobalGet(_) | Op::GlobalSet(_) | Op::GlobalTee(_) => 2,
-            Op::Const(_) |
-            Op::Store8(_) |
-            Op::Store16(_) | 
-            Op::Store32(_) |
-            Op::Load8u(_) |
-            Op::Load8s(_) | 
-            Op::Load16s(_) | 
-            Op::Load16u(_) | 
-            Op::Load32s(_) | 
-            Op::Load32u(_) => 5,
+            Op::LocalGet(_)
+            | Op::LocalSet(_)
+            | Op::LocalTee(_)
+            | Op::GlobalGet(_)
+            | Op::GlobalSet(_)
+            | Op::GlobalTee(_) => 2,
+            Op::Const(_)
+            | Op::Store8(_)
+            | Op::Store16(_)
+            | Op::Store32(_)
+            | Op::Load8u(_)
+            | Op::Load8s(_)
+            | Op::Load16s(_)
+            | Op::Load16u(_)
+            | Op::Load32s(_)
+            | Op::Load32u(_) => 5,
             _ => 1,
         }
     }
