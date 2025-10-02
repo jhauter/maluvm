@@ -1,15 +1,19 @@
+use crate::interpreter::opcode::{StoreArgs};
+
 const INITAL_VALUE_STACK_SIZE: usize = 65536 / 4;
 const INITAL_RETURN_STACK_SIZE: usize = 20;
 const MIN_HEAP_SIZE: usize = 65536;
 const CODE_START_ADDR: u32 = 8;
+
 #[derive(Debug, Clone)]
 pub enum InterpreterErrorType {
     InvalidBytecodeHeader,
-    AddrOutOfScope(u32),
+    AddrOutOfBounds(u32),
     UnexpectedValStackEmpty,
     ReachedUnreachable,
     InvalidJumpAddr(u32),
     InvalidLocalId(u8),
+    InvalidGlobalId(u8),
 }
 pub struct Frame {
     locals: [u32; 64],
@@ -41,17 +45,37 @@ pub fn is_bytecode_header_valid(bytecode: &[u8]) -> Result<(), InterpreterErrorT
 
 macro_rules! interpreter_impl_read_op {
     ($name: ident, $t: tt) => {
-        pub fn $name(&mut self, addr: u32) -> Result<$t, InterpreterErrorType> {
+        pub fn $name(&self, addr: u32) -> Result<$t, InterpreterErrorType> {
             Ok($t::from_le_bytes(
                 self.memory
                     .get(addr as usize..addr as usize + size_of::<$t>())
-                    .ok_or(InterpreterErrorType::AddrOutOfScope(addr))?
+                    .ok_or(InterpreterErrorType::AddrOutOfBounds(addr))?
                     .try_into()
                     .unwrap(),
             ))
         }
     };
 }
+macro_rules! interpreter_impl_store {
+    ($name: ident, $t: tt) => {
+        pub fn $name(&mut self, addr: u32, value: $t) -> Result<(), InterpreterErrorType> {
+            self.memory
+                .get_mut(addr as usize..addr as usize + size_of::<$t>())
+                .ok_or(InterpreterErrorType::AddrOutOfBounds(addr))?
+                .copy_from_slice(&$t::to_le_bytes(value));
+            Ok(())
+        }
+    };
+}
+macro_rules! do_binop {
+    ($self: ident, $a: ident, $b: ident, $op: expr) => {
+        let $b = $self.pop()?;
+        let $a = $self.pop()?;
+        $self.push($op as u32);
+        $self.pc += 1;
+    };
+}
+
 #[allow(non_upper_case_globals)]
 pub mod opcode {
     pub const Nop: u8 = 0x01;
@@ -101,6 +125,11 @@ pub mod opcode {
     pub const Extend8_32u: u8 = 0x2e;
     pub const Extend16_32u: u8 = 0x2f;
     pub const End: u8 = 0x30;
+
+    pub struct StoreArgs {
+        pub addr: u32,
+        pub value: u32,
+    }
 }
 impl Interpreter {
     interpreter_impl_read_op!(read_u16, u16);
@@ -109,13 +138,19 @@ impl Interpreter {
     interpreter_impl_read_op!(read_i16, i16);
     interpreter_impl_read_op!(read_i32, i32);
 
+    interpreter_impl_store!(store_u16, u16);
+    interpreter_impl_store!(store_u32, u32);
+
+    interpreter_impl_store!(store_i16, i16);
+    interpreter_impl_store!(store_i32, i32);
+
     pub fn from_bytecode(bytecode: &[u8]) -> Result<Self, InterpreterErrorType> {
         is_bytecode_header_valid(bytecode)?;
 
         let mut interpreter = Interpreter {
             value_stack: Vec::with_capacity(INITAL_VALUE_STACK_SIZE),
             return_stack: Vec::with_capacity(INITAL_RETURN_STACK_SIZE),
-            memory: Vec::with_capacity(bytecode.len() + MIN_HEAP_SIZE),
+            memory: vec![0; bytecode.len() + MIN_HEAP_SIZE],
             pc: CODE_START_ADDR,
             globals: [0; 64],
             running: false,
@@ -127,24 +162,36 @@ impl Interpreter {
     }
 
     pub fn init_memory(&mut self, bytecode: &[u8]) {
-        self.memory.extend_from_slice(&bytecode[2..])
+        self.memory[..bytecode.len() - 2].copy_from_slice(&bytecode[2..]);
     }
 
     fn read_u8(&self, addr: u32) -> Result<u8, InterpreterErrorType> {
         self.memory
             .get(addr as usize)
-            .ok_or(InterpreterErrorType::AddrOutOfScope(addr))
+            .ok_or(InterpreterErrorType::AddrOutOfBounds(addr))
             .cloned()
     }
 
+    fn store_u8(&mut self, addr: u32, value: u8) -> Result<(), InterpreterErrorType> {
+        *self
+            .memory
+            .get_mut(addr as usize)
+            .ok_or(InterpreterErrorType::AddrOutOfBounds(addr))? = value;
+        Ok(())
+    }
+
     fn push(&mut self, val: u32) {
+        println!("pushing: {}", val);
         self.value_stack.push(val);
     }
 
     fn pop(&mut self) -> Result<u32, InterpreterErrorType> {
-        self.value_stack
+        let val = self
+            .value_stack
             .pop()
-            .ok_or(InterpreterErrorType::UnexpectedValStackEmpty)
+            .ok_or(InterpreterErrorType::UnexpectedValStackEmpty)?;
+        println!("popping: {}", val);
+        Ok(val)
     }
     fn peek(&self) -> Result<u32, InterpreterErrorType> {
         self.value_stack
@@ -187,8 +234,27 @@ impl Interpreter {
         self.return_stack.last_mut().unwrap()
     }
 
+    pub fn read_imm_u8(&self, offset: u32) -> Result<u8, InterpreterErrorType> {
+        let addr = self.pc + offset;
+        self.read_u8(addr)
+    }
+
+    pub fn read_imm_u32(&self, offset: u32) -> Result<u32, InterpreterErrorType> {
+        let addr = self.pc + offset;
+        self.read_u32(addr)
+    }
+
+    pub fn read_store_args(&mut self) -> Result<StoreArgs, InterpreterErrorType> {
+        let offset = self.read_imm_u32(1)?;
+        let value = self.pop()?;
+        let addr = self.pop()? + offset;
+
+        Ok(StoreArgs { addr, value })
+    }
+
     pub fn read_local(&self, id_arg_offset: u32) -> Result<u32, InterpreterErrorType> {
-        let id = self.pc + id_arg_offset;
+        let id = self.read_imm_u8(id_arg_offset)?;
+
         self.current_frame()
             .locals
             .get(id as usize)
@@ -196,12 +262,17 @@ impl Interpreter {
             .copied()
     }
 
-    pub fn set_local(
-        &mut self,
-        id_arg_offset: u32,
-        value: u32,
-    ) -> Result<u32, InterpreterErrorType> {
-        let id = self.pc + id_arg_offset;
+    fn read_global(&self, id_arg_offset: u32) -> Result<u32, InterpreterErrorType> {
+        let id = self.read_imm_u8(id_arg_offset)?;
+        println!("reading global at: {}", id);
+        self.globals
+            .get(id as usize)
+            .ok_or(InterpreterErrorType::InvalidLocalId(id as u8))
+            .copied()
+    }
+
+    fn set_local(&mut self, id_arg_offset: u32, value: u32) -> Result<u32, InterpreterErrorType> {
+        let id = self.read_imm_u8(id_arg_offset)?;
         *self
             .current_frame_mut()
             .locals
@@ -210,10 +281,21 @@ impl Interpreter {
         Ok(value)
     }
 
+    fn set_global(&mut self, id_arg_offset: u32, value: u32) -> Result<u32, InterpreterErrorType> {
+        let id = self.read_imm_u8(id_arg_offset)?;
+        *self
+            .globals
+            .get_mut(id as usize)
+            .ok_or(InterpreterErrorType::InvalidGlobalId(id as u8))? = value;
+        Ok(value)
+    }
     pub fn exec_next_op(&mut self) -> Result<(), InterpreterErrorType> {
-        match self.read_u8(self.pc)? {
+        let op = self.read_u8(self.pc)?; 
+        println!("op: {:0x}", op);
+        match op {
             opcode::Nop => Ok(self.pc += 1),
             opcode::End => {
+                println!("end!");
                 self.running = false;
                 Ok(())
             }
@@ -256,25 +338,147 @@ impl Interpreter {
             }
             opcode::LocalSet => {
                 let val = self.pop()?;
-                self.set_local(2, val)?;
+                self.set_local(1, val)?;
                 self.pc += 2;
                 Ok(())
             }
             opcode::LocalTee => {
                 let val = self.peek()?;
-                self.set_local(2, val)?;
+                self.set_local(1, val)?;
+                self.pc += 2;
+                Ok(())
+            }
+            opcode::GlobalGet => {
+                let global = self.read_global(1)?;
+                println!("globals {:?}", self.globals);
+                self.push(global);
+                self.pc += 2;
+                Ok(())
+            }
+            opcode::GlobalSet => {
+                println!("global set");
+                let val = self.pop()?;
+                _ = self.set_global(1, val)?;
+                self.pc += 2;
+                Ok(())
+            }
+            opcode::GlobalTee => {
+                let val = self.peek()?;
+                self.set_global(1, val)?;
                 self.pc += 2;
                 Ok(())
             }
             opcode::Add => {
-                let a = self.pop()?;
-                let b = self.pop()?;
-                self.push(a + b);
-                self.pc += 1;
+                do_binop!(self, a, b, a + b);
+                Ok(())
+            }
+            opcode::Sub => {
+                do_binop!(self, a, b, a.wrapping_sub(b));
+                Ok(())
+            }
+            opcode::Mul => {
+                do_binop!(self, a, b, a * b);
+                Ok(())
+            }
+            opcode::Divu => {
+                do_binop!(self, a, b, a / b);
+                Ok(())
+            }
+            opcode::Divs => {
+                do_binop!(self, a, b, a as i32 / b as i32);
+                Ok(())
+            }
+            opcode::Lt => {
+                do_binop!(self, a, b, a < b);
+                Ok(())
+            }
+            opcode::Gt => {
+                do_binop!(self, a, b, a > b);
+                Ok(())
+            }
+            opcode::Ge => {
+                do_binop!(self, a, b, a >= b);
+                Ok(())
+            }
+            opcode::Le => {
+                do_binop!(self, a, b, a <= b);
+                Ok(())
+            }
+            opcode::And => {
+                do_binop!(self, a, b, a & b);
+                Ok(())
+            }
+            opcode::Or => {
+                do_binop!(self, a, b, a | b);
+                Ok(())
+            }
+            opcode::Xor => {
+                do_binop!(self, a, b, a ^ b);
                 Ok(())
             }
 
-            _ => todo!(),
+            opcode::Shiftl => {
+                do_binop!(self, a, b, a.wrapping_shl(b));
+                Ok(())
+            }
+            opcode::Shiftr => {
+                do_binop!(self, a, b, a >> b);
+                Ok(())
+            }
+
+            opcode::Store8 => {
+                let args = self.read_store_args()?;
+                self.store_u8(args.addr, args.value as u8)?;
+                self.pc += 5;
+                Ok(())
+            }
+
+            opcode::Store16 => {
+                let args = self.read_store_args()?;
+                self.store_u16(args.addr, args.value as u16)?;
+                self.pc += 5;
+                Ok(())
+            }
+
+            opcode::Store32 => {
+                let args = self.read_store_args()?;
+                println!("storing {} at {}", args.value, args.addr);
+                self.store_u32(args.addr, args.value)?;
+                self.pc += 5;
+                Ok(())
+            }
+
+            opcode::Load8u => {
+                let offset = self.read_imm_u32(1)?;
+                let addr = offset + self.pop()?;
+            
+                self.push(self.read_u8(addr)? as u32);
+                self.pc += 5;
+                Ok(())
+            }
+            opcode::Load16u => {
+                let offset = self.read_imm_u32(1)?;
+                let addr = offset + self.pop()?;
+                self.push(self.read_u16(addr)? as u32);
+                self.pc += 5;
+                Ok(())
+            }
+
+            opcode::Load32u => {
+                let offset = self.read_imm_u32(1)?;
+                let addr = offset + self.pop()?;
+                self.push(self.read_u32(addr)?);
+                self.pc += 5;
+                Ok(())
+            }
+            
+            opcode::Extend8_32s => {
+                let d = self.pop()? as i8 as i32 as u32; 
+                self.push(d); //?
+                self.pc += 5;
+                Ok(())
+            } 
+            _ => todo!(),            
         }
     }
 
@@ -296,7 +500,7 @@ mod tests {
     use crate::asm;
 
     #[test]
-    fn hello_world() {
+    fn hello_world_add_numbers() {
         let code = "
             #1; #1; add;
             end;
@@ -308,5 +512,53 @@ mod tests {
             .run()
             .unwrap()[0];
         assert_eq!(result, 2);
+    }
+
+    #[test]
+    fn globals_locals() {
+        let code = "
+            #100; global_set 0;
+            #2; global_set 1; 
+
+            global_get 0;
+            global_get 1;
+            add;
+            
+            #5; local_set 0;
+            #2; local_set 1;
+
+            local_get 0;
+            local_get 1;
+
+            add;
+            end;
+        ";
+        let bytecode = asm::parse(code).unwrap().as_bytecode();
+        println!("bytecode: {:#x?}", bytecode);
+        let mut bytecode = Interpreter::from_bytecode(&bytecode).unwrap();
+        let result = &bytecode.run().unwrap();
+
+        assert_eq!(result[0], 102);
+        assert_eq!(result[1], 7);
+    }
+    #[test]
+    fn load_store() {
+        let code = "
+            #100; 
+            #5;
+            store_32 0;
+
+            #100;
+            load_32_u 0;
+            
+            end;    
+        ";
+
+        let bytecode = asm::parse(code).unwrap().as_bytecode();
+        println!("bytecode: {:#x?}", bytecode);
+        let mut bytecode = Interpreter::from_bytecode(&bytecode).unwrap();
+        let result = &bytecode.run().unwrap();
+        assert_eq!(result[0], 5);
+
     }
 }
