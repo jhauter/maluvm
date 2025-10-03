@@ -499,19 +499,24 @@ mod tests {
     use super::*;
     use crate::asm;
 
+    macro_rules! assert_code_result {
+        ($code: expr, $expected: expr) => {
+            let bytecode = asm::parse($code).unwrap().as_bytecode();
+            assert!(bytecode.len() > 0);
+            let mut interpreter = Interpreter::from_bytecode(&bytecode).unwrap();
+ 
+            let result = interpreter.run().unwrap();
+            assert_eq!(result, $expected);
+        };
+    }
+
     #[test]
     fn hello_world_add_numbers() {
         let code = "
             #1; #1; add;
             end;
         ";
-        let bytecode = asm::parse(code).unwrap().as_bytecode();
-        assert!(bytecode.len() > 0);
-        let result = Interpreter::from_bytecode(&bytecode)
-            .unwrap()
-            .run()
-            .unwrap()[0];
-        assert_eq!(result, 2);
+        assert_code_result!(code, &[2]);
     }
 
     #[test]
@@ -533,13 +538,7 @@ mod tests {
             add;
             end;
         ";
-        let bytecode = asm::parse(code).unwrap().as_bytecode();
-        println!("bytecode: {:#x?}", bytecode);
-        let mut bytecode = Interpreter::from_bytecode(&bytecode).unwrap();
-        let result = &bytecode.run().unwrap();
-
-        assert_eq!(result[0], 102);
-        assert_eq!(result[1], 7);
+        assert_code_result!(code, &[102, 7]);
     }
     #[test]
     fn load_store() {
@@ -553,12 +552,7 @@ mod tests {
             
             end;    
         ";
-
-        let bytecode = asm::parse(code).unwrap().as_bytecode();
-        println!("bytecode: {:#x?}", bytecode);
-        let mut bytecode = Interpreter::from_bytecode(&bytecode).unwrap();
-        let result = &bytecode.run().unwrap();
-        assert_eq!(result[0], 5);
-
+        assert_code_result!(code, &[5]);
     }
+
 }
