@@ -1,9 +1,13 @@
-use crate::interpreter::opcode::{StoreArgs};
+use smallvec::SmallVec;
+
+use crate::{asm::{self, CODE_START_ADDR_POS}, interpreter::opcode::StoreArgs};
 
 const INITAL_VALUE_STACK_SIZE: usize = 65536 / 4;
 const INITAL_RETURN_STACK_SIZE: usize = 20;
 const MIN_HEAP_SIZE: usize = 65536;
-const CODE_START_ADDR: u32 = 8;
+const MAX_GLOBALS: usize = 64;
+const MAX_LOCALS: usize = 64;
+const MAX_ARGS: usize = 12;
 
 #[derive(Debug, Clone)]
 pub enum InterpreterErrorType {
@@ -14,16 +18,18 @@ pub enum InterpreterErrorType {
     InvalidJumpAddr(u32),
     InvalidLocalId(u8),
     InvalidGlobalId(u8),
+    ArgStackFull,
+    UnexpectedEmptyFrameStack,
 }
 pub struct Frame {
-    locals: [u32; 64],
+    locals: [u32; MAX_LOCALS],
     return_addr: u32,
 }
 impl Frame {
     pub fn empty() -> Self {
         Self {
-            locals: [0; 64],
-            return_addr: CODE_START_ADDR,
+            locals: [0; _],
+            return_addr: CODE_START_ADDR_POS,
         }
     }
 }
@@ -32,15 +38,9 @@ pub struct Interpreter {
     return_stack: Vec<Frame>,
     memory: Vec<u8>,
     pc: u32,
-    globals: [u32; 64],
+    globals: [u32; MAX_GLOBALS],
+    args: SmallVec<[u32; MAX_ARGS]>,
     running: bool,
-}
-pub fn is_bytecode_header_valid(bytecode: &[u8]) -> Result<(), InterpreterErrorType> {
-    if bytecode[0..2].eq(&[b'm', b'a']) {
-        Ok(())
-    } else {
-        Err(InterpreterErrorType::InvalidBytecodeHeader)
-    }
 }
 
 macro_rules! interpreter_impl_read_op {
@@ -74,6 +74,14 @@ macro_rules! do_binop {
         $self.push($op as u32);
         $self.pc += 1;
     };
+}
+
+pub fn is_bytecode_header_valid(bytecode: &[u8]) -> Result<(), InterpreterErrorType> {
+    if bytecode[0..4].eq(&[b'm', b'a', b'l', b'u']) {
+        Ok(())
+    } else {
+        Err(InterpreterErrorType::InvalidBytecodeHeader)
+    }
 }
 
 #[allow(non_upper_case_globals)]
@@ -125,6 +133,7 @@ pub mod opcode {
     pub const Extend8_32u: u8 = 0x2e;
     pub const Extend16_32u: u8 = 0x2f;
     pub const End: u8 = 0x30;
+    pub const PushArg: u8 = 0x31;
 
     pub struct StoreArgs {
         pub addr: u32,
@@ -151,18 +160,24 @@ impl Interpreter {
             value_stack: Vec::with_capacity(INITAL_VALUE_STACK_SIZE),
             return_stack: Vec::with_capacity(INITAL_RETURN_STACK_SIZE),
             memory: vec![0; bytecode.len() + MIN_HEAP_SIZE],
-            pc: CODE_START_ADDR,
-            globals: [0; 64],
+            pc: 0,
+            globals: [0; _],
             running: false,
+            args: SmallVec::new(),
         };
+
         interpreter.init_memory(bytecode);
         interpreter.return_stack.push(Frame::empty());
+
+        let start_code_addr = interpreter.read_u32(CODE_START_ADDR_POS)?;
+        interpreter.pc = start_code_addr;
+        println!("code start addr: {}", interpreter.pc);
 
         Ok(interpreter)
     }
 
     pub fn init_memory(&mut self, bytecode: &[u8]) {
-        self.memory[..bytecode.len() - 2].copy_from_slice(&bytecode[2..]);
+        self.memory[..bytecode.len() - 4].copy_from_slice(&bytecode[4..]);
     }
 
     fn read_u8(&self, addr: u32) -> Result<u8, InterpreterErrorType> {
@@ -181,7 +196,7 @@ impl Interpreter {
     }
 
     fn push(&mut self, val: u32) {
-        println!("pushing: {}", val);
+        println!("push {val}");
         self.value_stack.push(val);
     }
 
@@ -190,14 +205,8 @@ impl Interpreter {
             .value_stack
             .pop()
             .ok_or(InterpreterErrorType::UnexpectedValStackEmpty)?;
-        println!("popping: {}", val);
+        println!("pop {val}");
         Ok(val)
-    }
-    fn peek(&self) -> Result<u32, InterpreterErrorType> {
-        self.value_stack
-            .last()
-            .ok_or(InterpreterErrorType::UnexpectedValStackEmpty)
-            .copied()
     }
 
     fn pop_bool(&mut self) -> Result<bool, InterpreterErrorType> {
@@ -207,6 +216,12 @@ impl Interpreter {
         }
     }
 
+    fn peek(&self) -> Result<u32, InterpreterErrorType> {
+        self.value_stack
+            .last()
+            .ok_or(InterpreterErrorType::UnexpectedValStackEmpty)
+            .copied()
+    }
     pub fn exec_jmp(&mut self) -> Result<(), InterpreterErrorType> {
         let addr = self.pop()?;
         if addr >= self.memory.len() as u32 {
@@ -264,7 +279,6 @@ impl Interpreter {
 
     fn read_global(&self, id_arg_offset: u32) -> Result<u32, InterpreterErrorType> {
         let id = self.read_imm_u8(id_arg_offset)?;
-        println!("reading global at: {}", id);
         self.globals
             .get(id as usize)
             .ok_or(InterpreterErrorType::InvalidLocalId(id as u8))
@@ -289,8 +303,18 @@ impl Interpreter {
             .ok_or(InterpreterErrorType::InvalidGlobalId(id as u8))? = value;
         Ok(value)
     }
+
+    pub fn create_frame(&mut self) {
+        self.return_stack.push(Frame::empty());
+        let frame = self.return_stack.last_mut().unwrap();
+        //TODO: (joh): Check here if pc + 1 might be out of bounds?
+        frame.return_addr = self.pc + 1;
+
+        frame.locals[..self.args.len()].copy_from_slice(&self.args);
+    }
+
     pub fn exec_next_op(&mut self) -> Result<(), InterpreterErrorType> {
-        let op = self.read_u8(self.pc)?; 
+        let op = self.read_u8(self.pc)?;
         println!("op: {:0x}", op);
         match op {
             opcode::Nop => Ok(self.pc += 1),
@@ -307,6 +331,7 @@ impl Interpreter {
             }
             opcode::Const => {
                 let arg = self.read_i32(self.pc + 1)?;
+                println!("const {}", arg);
                 self.push(arg as u32);
                 self.pc += 1_u32 + size_of::<i32>() as u32;
                 Ok(())
@@ -332,23 +357,27 @@ impl Interpreter {
                 Ok(())
             }
             opcode::LocalGet => {
+                println!("local get");
                 self.push(self.read_local(1)?);
                 self.pc += 2;
                 Ok(())
             }
             opcode::LocalSet => {
+                println!("local set");
                 let val = self.pop()?;
                 self.set_local(1, val)?;
                 self.pc += 2;
                 Ok(())
             }
             opcode::LocalTee => {
+                println!("local tee");
                 let val = self.peek()?;
                 self.set_local(1, val)?;
                 self.pc += 2;
                 Ok(())
             }
             opcode::GlobalGet => {
+                println!("global get");
                 let global = self.read_global(1)?;
                 println!("globals {:?}", self.globals);
                 self.push(global);
@@ -363,12 +392,14 @@ impl Interpreter {
                 Ok(())
             }
             opcode::GlobalTee => {
+                println!("global tee");
                 let val = self.peek()?;
                 self.set_global(1, val)?;
                 self.pc += 2;
                 Ok(())
             }
             opcode::Add => {
+                println!("add");
                 do_binop!(self, a, b, a + b);
                 Ok(())
             }
@@ -451,7 +482,7 @@ impl Interpreter {
             opcode::Load8u => {
                 let offset = self.read_imm_u32(1)?;
                 let addr = offset + self.pop()?;
-            
+
                 self.push(self.read_u8(addr)? as u32);
                 self.pc += 5;
                 Ok(())
@@ -471,14 +502,53 @@ impl Interpreter {
                 self.pc += 5;
                 Ok(())
             }
-            
+
             opcode::Extend8_32s => {
-                let d = self.pop()? as i8 as i32 as u32; 
+                let d = self.pop()? as i8 as i32 as u32;
                 self.push(d); //?
-                self.pc += 5;
+                self.pc += 1;
                 Ok(())
-            } 
-            _ => todo!(),            
+            }
+            opcode::PushArg => {
+                println!("push arg");
+                if self.args.len() >= MAX_ARGS {
+                    Err(InterpreterErrorType::ArgStackFull)
+                } else {
+                    let arg = self.pop()?;
+                    self.args.push(arg);
+                    self.pc += 1;
+                    Ok(())
+                }
+            }
+            opcode::Call => {
+                let addr = self.pop()?;
+                if addr >= self.memory.len() as u32 {
+                    Err(InterpreterErrorType::InvalidJumpAddr(addr))
+                } else {
+                    self.create_frame();
+                    self.pc = addr;
+                    self.args.clear();
+
+                    Ok(())
+                }
+            }
+            opcode::Return => {
+                let last_frame = self
+                    .return_stack
+                    .pop()
+                    .ok_or(InterpreterErrorType::UnexpectedEmptyFrameStack)?;
+                match last_frame.return_addr {
+                    0 => {
+                        self.running = false;
+                        Ok(())
+                    }
+                    addr => {
+                        self.pc = addr;
+                        Ok(())
+                    }
+                }
+            }
+            _ => todo!(),
         }
     }
 
@@ -504,7 +574,7 @@ mod tests {
             let bytecode = asm::parse($code).unwrap().as_bytecode();
             assert!(bytecode.len() > 0);
             let mut interpreter = Interpreter::from_bytecode(&bytecode).unwrap();
- 
+
             let result = interpreter.run().unwrap();
             assert_eq!(result, $expected);
         };
@@ -554,5 +624,23 @@ mod tests {
         ";
         assert_code_result!(code, &[5]);
     }
-
+    #[test]
+    fn call_function_with_params() {
+        let code = "
+            :func1: 
+            local_get 0;
+            local_get 1;
+            add;
+            return; 
+             
+            :__ENTRY__:
+            #1; push_arg;
+            #2; push_arg;
+            #@func1;
+            call; 
+            end;
+             
+        ";
+        assert_code_result!(code, &[3]);
+    }
 }

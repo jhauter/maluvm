@@ -1,4 +1,4 @@
-use crate::op::Op;
+use crate::{interpreter::InterpreterErrorType, op::Op};
 use std::{
     collections::HashMap,
     num::{ParseIntError, TryFromIntError},
@@ -47,6 +47,13 @@ impl<'src> AssembleError<'src> {
     }
 }
 const STATEMENT_SEP: char = ';';
+const ENTRY_LABEL_NAME: &'static str = "__ENTRY__";
+pub const BYTECODE_HEADER: [u8; 4] = [b'm', b'a', b'l', b'u'];
+
+//TODO (joh): This has to be updated manually each time the bytecode header definiton changes.
+//Make this a macro maybe
+pub const CODE_START_ADDR_POS: u32 = (2 * size_of::<u32>()) as u32;
+pub const CODE_START: u32 = (3 * size_of::<u32>()) as u32;
 
 pub struct ParseOutput<'src, T> {
     word: T,
@@ -58,22 +65,64 @@ pub struct Label<'src> {
     pub position: usize,
 }
 
+pub struct BytecodeInfo {
+    pub code_size_bytes: u32,
+    pub instruction_count: u32,
+    pub code_start_offset: u32,
+}
+impl BytecodeInfo {
+    //NOTE(joh): Maybe use a packed struct?
+    pub const fn total_header_size() -> usize {
+        3 * size_of::<u32>() + size_of_val(&BYTECODE_HEADER)
+    }
+    pub fn total_size(&self) -> usize {
+        self.code_size_bytes as usize + Self::total_header_size()
+    }
+
+    fn to_bytecode(&self) -> Vec<u8> {
+        let mut buffer = Vec::with_capacity(self.total_size());
+        buffer.extend_from_slice(&BYTECODE_HEADER);
+
+        buffer.extend_from_slice(&(self.code_size_bytes).to_le_bytes());
+        buffer.extend_from_slice(&(self.instruction_count).to_le_bytes());
+        buffer.extend_from_slice(&(self.code_start_offset).to_le_bytes());
+
+        buffer
+    }
+}
 pub struct ParseState<'src> {
     ops: Vec<Op>,
     op_size_bytes: usize,
     line: usize,
     labels: HashMap<&'src str, usize>,
+    entry_addr: Option<u32>,
 }
+
 impl<'src, 'bump> ParseState<'src> {
+    fn try_get_label(&self, name: &'src str) -> Result<usize, AssembleError<'src>> {
+        self.labels
+            .get(name)
+            .ok_or(AssembleError::new(
+                self,
+                AssembleErrorKind::UnknownLabel(name),
+            ))
+            .copied()
+    }
+    pub fn get_bytecode_info(&self) -> BytecodeInfo {
+        let code_size_bytes = self.op_size_bytes as u32;
+        let instruction_count = self.ops.len() as u32;
+        println!("header size {}", BytecodeInfo::total_header_size());
+        let code_start_offset = self.entry_addr.unwrap_or(0_u32) + CODE_START;
+        println!("code start offset: {}", code_start_offset);
+        BytecodeInfo {
+            code_size_bytes,
+            instruction_count,
+            code_start_offset,
+        }
+    }
     pub fn as_bytecode(&self) -> Box<[u8]> {
-        let header: [u8; _] = [b'm', b'a'];
-        let buffer_size = self.op_size_bytes + size_of_val(&header) + (size_of::<u32>() * 2);
-
-        let mut buffer = Vec::with_capacity(buffer_size);
-
-        buffer.extend_from_slice(&header);
-        buffer.extend_from_slice(&(self.op_size_bytes as u32).to_le_bytes());
-        buffer.extend_from_slice(&(self.ops.len() as u32).to_le_bytes());
+        let info = self.get_bytecode_info();
+        let mut buffer = info.to_bytecode();
 
         self.ops.iter().for_each(|o| encode_op(o, &mut buffer));
 
@@ -88,6 +137,7 @@ impl<'src> ParseState<'src> {
             op_size_bytes: 0,
             labels: HashMap::new(),
             ops: Vec::new(),
+            entry_addr: None,
         }
     }
 }
@@ -161,10 +211,11 @@ pub enum ArgType<'src> {
 impl<'src> ArgType<'src> {
     pub fn get_numeric(&self, state: &ParseState<'src>) -> i32 {
         match self {
-            ArgType::AbsLabelRef(label) => label.position as i32,
+            ArgType::AbsLabelRef(label) => label.position as i32 + CODE_START as i32,
             ArgType::OffLabelRef(label) => {
-                ((state.ops.len() as isize) - (label.position as isize)) as i32
+                ((state.op_size_bytes as isize) - (label.position as isize)) as i32
             }
+
             ArgType::Number(num) => *num,
         }
     }
@@ -176,19 +227,12 @@ pub fn parse_arg<'src>(
     match s.chars().next().unwrap() {
         '@' => {
             let name = &s[1..];
-            let position = *state.labels.get(name).ok_or(AssembleError::new(
-                state,
-                AssembleErrorKind::UnknownLabel(name),
-            ))?;
-
+            let position = state.try_get_label(name)?; 
             Ok(ArgType::AbsLabelRef(Label { name, position }))
         }
         '.' => {
             let name = &s[1..];
-            let position = *state.labels.get(name).ok_or(AssembleError::new(
-                state,
-                AssembleErrorKind::UnknownLabel(name),
-            ))?;
+            let position = state.try_get_label(name)?;
 
             Ok(ArgType::OffLabelRef(Label { name, position }))
         }
@@ -286,6 +330,7 @@ pub fn parse_op<'src>(
         "extend_8_32_u" => Ok(Op::Extend8_32u),
         "extend_16_32_u" => Ok(Op::Extend16_32u),
         "end" => Ok(Op::End),
+        "push_arg" => Ok(Op::PushArg),
         _ => Err(AssembleError::new(
             state,
             AssembleErrorKind::UnknownOperation,
@@ -305,7 +350,7 @@ pub fn parse_label<'src>(
     s: &'src str,
 ) -> Result<(Label<'src>, Option<&'src str>), AssembleError<'src>> {
     let label = slice_until(state, s, ':')?;
-    let position = state.ops.len();
+    let position = state.op_size_bytes;
     println!("rest: {:?}", label.rest);
     Ok((
         Label {
@@ -327,6 +372,10 @@ pub fn parse<'src>(code: &'src str) -> Result<ParseState<'src>, AssembleError<'s
                     let label = parse_label(&state, &r[1..])?;
                     state.labels.insert(label.0.name, label.0.position);
                     rest = label.1;
+
+                    if label.0.name == ENTRY_LABEL_NAME {
+                        state.entry_addr = Some(label.0.position as u32)
+                    }
                 }
                 Some('#') => {
                     let statement = slice_until(&state, &r[1..], ';')?;
@@ -433,9 +482,9 @@ mod tests {
             jmp;     
         ";
         let ops = parse(code).unwrap().ops;
-        assert_eq!(ops[3], Op::Const(3));
-        assert_eq!(ops[4], Op::Const(0));
-        assert_eq!(ops[5], Op::Const(2));
+        assert_eq!(ops[3], Op::Const(3 + CODE_START as i32));
+        assert_eq!(ops[4], Op::Const(0 + CODE_START as i32));
+        assert_eq!(ops[5], Op::Const(5));
         assert_eq!(ops[6], Op::Const(100));
     }
 
@@ -450,9 +499,10 @@ mod tests {
         let ops = parse(code).unwrap();
         let buffer = ops.as_bytecode();
 
-        assert_eq!(&buffer[0..2], &[b'm', b'a']);
-        let size_bytes = u32::from_le_bytes(buffer[2..6].try_into().unwrap());
-        let op_count = u32::from_le_bytes(buffer[6..10].try_into().unwrap());
+        assert_eq!(&buffer[0..4], &[b'm', b'a', b'l', b'u']);
+
+        let size_bytes = u32::from_le_bytes(buffer[4..8].try_into().unwrap());
+        let op_count = u32::from_le_bytes(buffer[8..12].try_into().unwrap());
         let expected_size = ops
             .ops
             .iter()
@@ -460,5 +510,25 @@ mod tests {
 
         assert_eq!(op_count, 4);
         assert_eq!(size_bytes, expected_size);
+    }
+
+    #[test]
+    fn entry_point() {
+        let code = "
+            :func1: 
+            local_get 0;
+            local_get 1;
+            add;
+            return; 
+
+            :__ENTRY__:
+            #1; push_arg;
+            #2; push_arg;
+            #@func1;
+            call; 
+            end;
+        ";
+
+        let res = parse(code).unwrap();
     }
 }
