@@ -659,6 +659,21 @@ mod tests {
 
         assert_code_result!(code, &[0x25]);
     }
+    
+    #[test]
+    fn simple_loop() {
+        let code = "
+            :loop:
+            #1; local_get 0; add; 
+            local_tee 0; #5; ge;
+            #@end; jmp_if;
+            #@loop; jmp; 
 
+            :end:
+            local_get 0;
+            end;
+        ";
+        assert_code_result!(code, &[5]);
+    }
     
 }

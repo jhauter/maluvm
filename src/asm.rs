@@ -175,7 +175,6 @@ impl<'src, 'bump> Parser<'src> {
                         elems.push(Elem::Label(label));
                         rest = label_rest;
                     }
-
                     Some(_) => {
                         let op_res = self.parse_op(r)?;
                         let op = op_res.0;
