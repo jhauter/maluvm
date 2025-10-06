@@ -1,9 +1,11 @@
-#[derive(PartialEq, PartialOrd, Debug, Clone)]
-pub enum Op {
+use crate::asm::ArgType;
+
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub enum Op<'src> {
     Nop,
     Unreachable,
     Drop,
-    Const(i32),
+    Const(ArgType<'src>),
     Jmp,
     JmpIf,
     Branch,
@@ -33,16 +35,15 @@ pub enum Op {
     Shiftl,
     Call,
     Return,
-    Store8(u32),
-    Store16(u32),
-    Store32(u32),
-
-    Load8u(u32),
-    Load8s(u32),
-    Load16s(u32),
-    Load16u(u32),
-    Load32s(u32),
-    Load32u(u32),
+    Store8(ArgType<'src>),
+    Store16(ArgType<'src>),
+    Store32(ArgType<'src>),
+    Load8u(ArgType<'src>),
+    Load8s (ArgType<'src>),
+    Load16s(ArgType<'src>),
+    Load16u(ArgType<'src>),
+    Load32s(ArgType<'src>),
+    Load32u(ArgType<'src>),
 
     Extend8_32s,
     Extend16_32s,
@@ -52,13 +53,13 @@ pub enum Op {
     End,
 }
 
-impl std::fmt::Display for Op {
+impl std::fmt::Display for Op<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Op::Nop => write!(f, "nop"),
             Op::Unreachable => write!(f, "unreachable"),
             Op::Drop => write!(f, "drop"),
-            Op::Const(i) => write!(f, "const {:x}", i),
+            Op::Const(i) => write!(f, "const {}", i),
             Op::Jmp => write!(f, "jmp"),
             Op::JmpIf => write!(f, "jmp_if"),
             Op::Branch => write!(f, "branch"),
@@ -85,15 +86,15 @@ impl std::fmt::Display for Op {
             Op::Shiftl => write!(f, "shiftl"),
             Op::Call => write!(f, "call"),
             Op::Return => write!(f, "return"),
-            Op::Store8(off) => write!(f, "store_8 {:x}", off),
-            Op::Store16(off) => write!(f, "store_16 {:x}", off),
-            Op::Store32(off) => write!(f, "store_32 {:x}", off),
-            Op::Load8u(off) => write!(f, "load_8_u {:x}", off),
-            Op::Load8s(off) => write!(f, "load_8_s {:x}", off),
-            Op::Load16s(off) => write!(f, "load_16_s {:x}", off),
-            Op::Load16u(off) => write!(f, "load_16_u {:x}", off),
-            Op::Load32s(off) => write!(f, "load_32_s {:x}", off),
-            Op::Load32u(off) => write!(f, "load_32_u {:x}", off),
+            Op::Store8(off) => write!(f, "store_8 {}", off),
+            Op::Store16(off) => write!(f, "store_16 {}", off),
+            Op::Store32(off) => write!(f, "store_32 {}", off),
+            Op::Load8u(off) => write!(f, "load_8_u {}", off),
+            Op::Load8s(off) => write!(f, "load_8_s {}", off),
+            Op::Load16s(off) => write!(f, "load_16_s {}", off),
+            Op::Load16u(off) => write!(f, "load_16_u {}", off),
+            Op::Load32s(off) => write!(f, "load_32_s {}", off),
+            Op::Load32u(off) => write!(f, "load_32_u {}", off),
             Op::Extend8_32s => write!(f, "extend_8_32_s"),
             Op::Extend16_32s => write!(f, "extend_16_32_s"),
             Op::Extend8_32u => write!(f, "extend_8_32_u"),
@@ -107,7 +108,7 @@ impl std::fmt::Display for Op {
     }
 }
 
-impl Op {
+impl Op<'_> {
     pub fn repr(&self) -> u8 {
         match self {
             Op::Nop => 0x01,

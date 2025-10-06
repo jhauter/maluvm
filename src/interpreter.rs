@@ -222,8 +222,7 @@ impl Interpreter {
             .ok_or(InterpreterErrorType::UnexpectedValStackEmpty)
             .copied()
     }
-    pub fn exec_jmp(&mut self) -> Result<(), InterpreterErrorType> {
-        let addr = self.pop()?;
+    pub fn try_jump_to(&mut self, addr: u32) -> Result<(), InterpreterErrorType> {
         if addr >= self.memory.len() as u32 {
             Err(InterpreterErrorType::InvalidJumpAddr(addr))
         } else {
@@ -232,14 +231,15 @@ impl Interpreter {
         }
     }
 
+    pub fn exec_jmp(&mut self) -> Result<(), InterpreterErrorType> {
+        println!("jmp!");
+        let addr = self.pop()?;
+        self.try_jump_to(addr)
+    }
+
     pub fn exec_branch(&mut self) -> Result<(), InterpreterErrorType> {
         let addr = self.pop()? + self.pc;
-        if addr >= self.memory.len() as u32 {
-            Err(InterpreterErrorType::InvalidJumpAddr(addr))
-        } else {
-            self.pc = addr;
-            Ok(())
-        }
+        self.try_jump_to(addr)
     }
 
     pub fn current_frame(&self) -> &Frame {
@@ -338,8 +338,10 @@ impl Interpreter {
             }
             opcode::Jmp => Ok(_ = self.exec_jmp()?),
             opcode::JmpIf => {
+                let addr = self.pop()?;
+
                 if self.pop_bool()? {
-                    self.exec_jmp()?;
+                    self.try_jump_to(addr)?;
                 } else {
                     self.pc += 1;
                 }
@@ -348,14 +350,15 @@ impl Interpreter {
             }
             opcode::Branch => Ok(_ = self.exec_branch()),
             opcode::BranchIf => {
+                let addr = self.pop()? + self.pc;
                 if self.pop_bool()? {
-                    self.exec_branch()?;
+                    self.try_jump_to(addr)?;
                 } else {
                     self.pc += 1;
                 }
-
                 Ok(())
             }
+
             opcode::LocalGet => {
                 println!("local get");
                 self.push(self.read_local(1)?);
@@ -521,6 +524,7 @@ impl Interpreter {
                 }
             }
             opcode::Call => {
+                println!("call");
                 let addr = self.pop()?;
                 if addr >= self.memory.len() as u32 {
                     Err(InterpreterErrorType::InvalidJumpAddr(addr))
@@ -533,6 +537,7 @@ impl Interpreter {
                 }
             }
             opcode::Return => {
+                println!("return");
                 let last_frame = self
                     .return_stack
                     .pop()
@@ -571,7 +576,7 @@ mod tests {
 
     macro_rules! assert_code_result {
         ($code: expr, $expected: expr) => {
-            let bytecode = asm::parse($code).unwrap().as_bytecode();
+            let bytecode = asm::Parser::parse($code).unwrap();
             assert!(bytecode.len() > 0);
             let mut interpreter = Interpreter::from_bytecode(&bytecode).unwrap();
 
@@ -643,4 +648,17 @@ mod tests {
         ";
         assert_code_result!(code, &[3]);
     }
+    #[test]
+    fn simple_if_else() {
+        let code = "
+            #1; #2; gt;
+            #@if; jmp_if; 
+            :else: #0x25; end;
+            :if: unreachable;
+        ";
+
+        assert_code_result!(code, &[0x25]);
+    }
+
+    
 }
