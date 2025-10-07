@@ -322,7 +322,6 @@ impl Interpreter {
         match op {
             opcode::Nop => Ok(self.pc += 1),
             opcode::End => {
-                println!("end!");
                 self.running = false;
                 Ok(())
             }
@@ -334,7 +333,6 @@ impl Interpreter {
             }
             opcode::Const => {
                 let arg = self.read_i32(self.pc + 1)?;
-                println!("const {}", arg);
                 self.push(arg as u32);
                 self.pc += 1_u32 + size_of::<i32>() as u32;
                 Ok(())
@@ -479,7 +477,6 @@ impl Interpreter {
 
             opcode::Store32 => {
                 let args = self.read_store_args()?;
-                println!("storing {} at {}", args.value, args.addr);
                 self.store_u32(args.addr, args.value)?;
                 self.pc += 5;
                 Ok(())
@@ -516,7 +513,6 @@ impl Interpreter {
                 Ok(())
             }
             opcode::PushArg => {
-                println!("push arg");
                 if self.args.len() >= MAX_ARGS {
                     Err(InterpreterErrorType::ArgStackFull)
                 } else {
@@ -541,7 +537,6 @@ impl Interpreter {
             }
             
             opcode::Return => {
-                println!("return");
                 let last_frame = self
                     .return_stack
                     .pop()
@@ -727,5 +722,6 @@ mod tests {
             unreachable;
         ";
         assert_code_result!(code, &[10]);
-    } 
+    }
+
 }
