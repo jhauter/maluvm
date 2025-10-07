@@ -2,7 +2,6 @@ use crate::{interpreter::InterpreterErrorType, op::Op};
 use core::fmt;
 use std::{
     collections::HashMap,
-    ffi::os_str::Display,
     num::{ParseIntError, TryFromIntError},
 };
 
@@ -137,19 +136,18 @@ impl<'src, 'bump> Parser<'src> {
             labels: HashMap::new(),
         }
     }
-    
+
     pub fn parse(code: &'src str) -> Result<Box<[u8]>, AssembleError> {
-        let mut parser = Self::new(); 
+        let mut parser = Self::new();
 
         let elems = parser.parse_elems(code)?;
         let ops = parser.parse_ops(&elems)?;
-        
+
         parser.as_bytecode(&ops)
     }
     pub fn parse_elems(&mut self, code: &'src str) -> Result<Box<[Elem<'src>]>, AssembleError> {
         let mut rest = Some(code);
         let mut elems = Vec::new();
-
 
         loop {
             match rest {
@@ -165,12 +163,15 @@ impl<'src, 'bump> Parser<'src> {
                         elems.push(Elem::Op(op));
                         self.op_count += 1;
                         rest = statement.rest;
-                    }
+                    },
 
+                    Some('*') => {
+                        let arg = r.chars().next();
+                        
+                    }
                     Some(':') => {
                         let (label, label_rest) = self.parse_label(&r[1..])?;
 
-                        println!("label: {}", label.name);
                         self.labels.insert(label.name, label.position);
                         elems.push(Elem::Label(label));
                         rest = label_rest;
@@ -192,10 +193,7 @@ impl<'src, 'bump> Parser<'src> {
         Ok(elems.into())
     }
 
-    pub fn parse_ops(
-        &mut self,
-        elems: &[Elem<'src>],
-    ) -> Result<Box<[Op<'src>]>, AssembleError> {
+    pub fn parse_ops(&mut self, elems: &[Elem<'src>]) -> Result<Box<[Op<'src>]>, AssembleError> {
         let mut ops = Vec::with_capacity(self.op_count);
 
         for elem in elems {
@@ -247,14 +245,12 @@ impl<'src, 'bump> Parser<'src> {
             .copied()
     }
     pub fn get_bytecode_info(&self) -> BytecodeInfo {
-        let code_size_bytes = self.op_size_bytes as u32;
-        let instruction_count = self.op_count as u32;
-        println!("header size {}", BytecodeInfo::total_header_size());
-        let code_start_offset = self.labels.get(ENTRY_LABEL_NAME).copied().unwrap_or(0) as u32 + CODE_START;
-        println!("code start offset: {}", code_start_offset);
+        let code_start_offset =
+            self.labels.get(ENTRY_LABEL_NAME).copied().unwrap_or(0) as u32 + CODE_START;
+
         BytecodeInfo {
-            code_size_bytes,
-            instruction_count,
+            code_size_bytes: self.op_size_bytes as u32,
+            instruction_count: self.op_count as u32,
             code_start_offset,
         }
     }
@@ -268,6 +264,7 @@ impl<'src, 'bump> Parser<'src> {
 
         Ok(buffer.into_boxed_slice())
     }
+
     pub fn slice_until(
         &self,
         rest: &'src str,
@@ -288,6 +285,7 @@ impl<'src, 'bump> Parser<'src> {
             rest: next_rest,
         })
     }
+
     pub fn skip_whitespace(&mut self, rest: &'src str) -> Option<&'src str> {
         for (i, c) in rest.char_indices() {
             match c {
@@ -298,6 +296,7 @@ impl<'src, 'bump> Parser<'src> {
         }
         None
     }
+
     pub fn parse_arg(&self, s: &'src str) -> Result<ArgType<'src>, AssembleError> {
         match s.chars().next().unwrap() {
             '@' => Ok(ArgType::AbsLabelRef(&s[1..])),
@@ -339,10 +338,7 @@ impl<'src, 'bump> Parser<'src> {
             .ok_or(AssembleError::new(self, AssembleErrorKind::MissingArgument))?;
         Ok(self.parse_arg(s)?)
     }
-    pub fn parse_op(
-        &self,
-        s: &'src str,
-    ) -> Result<(Op<'src>, Option<&'src str>), AssembleError> {
+    pub fn parse_op(&self, s: &'src str) -> Result<(Op<'src>, Option<&'src str>), AssembleError> {
         let statement = self.slice_until(s, ';')?;
         let mut op_str = iter_op_args(statement.word);
         let op_name = op_str.next().unwrap();
@@ -393,6 +389,8 @@ impl<'src, 'bump> Parser<'src> {
             "extend_16_32_u" => Ok(Op::Extend16_32u),
             "end" => Ok(Op::End),
             "push_arg" => Ok(Op::PushArg),
+            "dbg_assert" => Ok(Op::DbgAssert),
+
             _ => Err(AssembleError::new(
                 self,
                 AssembleErrorKind::UnknownOperation,
@@ -470,16 +468,16 @@ mod tests {
 
     use super::*;
     macro_rules! assert_ops_eq {
-         ($code: expr, $expected: expr) => {
-        let mut parser = Parser::new(); 
+        ($code: expr, $expected: expr) => {
+            let mut parser = Parser::new();
 
-        let elems = parser.parse_elems($code).unwrap();
-        let ops: &[Op<'_>] = &parser.parse_ops(&elems).unwrap();
-        let expected: &[Op<'_>]=  $expected; 
+            let elems = parser.parse_elems($code).unwrap();
+            let ops: &[Op<'_>] = &parser.parse_ops(&elems).unwrap();
+            let expected: &[Op<'_>] = $expected;
 
-        assert_eq!(&ops, &expected)     
-         };
-     } 
+            assert_eq!(&ops, &expected)
+        };
+    }
     #[test]
     fn parse_number() {
         let s = Parser::new();
@@ -507,7 +505,10 @@ mod tests {
                     local_get 5; local_set 0xA;
             nop;
         ";
-        assert_ops_eq!(code, &[Op::Nop, Op::LocalGet(5), Op::LocalSet(0xA), Op::Nop]);
+        assert_ops_eq!(
+            code,
+            &[Op::Nop, Op::LocalGet(5), Op::LocalSet(0xA), Op::Nop]
+        );
     }
 
     #[test]
@@ -523,14 +524,18 @@ mod tests {
             #@blub; #.label;
             #100;
         ";
-        assert_ops_eq!(code, &[
-            Op::Nop, 
-            Op::Nop,  
-            Op::Nop, 
-            Op::Const(ArgType::AbsLabelRef("label")), 
-            Op::Const(ArgType::AbsLabelRef("blub")), 
-            Op::Const(ArgType::OffLabelRef("label")),
-            Op::Const(ArgType::Number(100))]);
+        assert_ops_eq!(
+            code,
+            &[
+                Op::Nop,
+                Op::Nop,
+                Op::Nop,
+                Op::Const(ArgType::AbsLabelRef("label")),
+                Op::Const(ArgType::AbsLabelRef("blub")),
+                Op::Const(ArgType::OffLabelRef("label")),
+                Op::Const(ArgType::Number(100))
+            ]
+        );
     }
 
     #[test]
@@ -541,7 +546,7 @@ mod tests {
             const 5;
             add;
         ";
-        let mut parser = Parser::new(); 
+        let mut parser = Parser::new();
 
         let elems = parser.parse_elems(code).unwrap();
         let ops: &[Op<'_>] = &parser.parse_ops(&elems).unwrap();
@@ -552,9 +557,7 @@ mod tests {
 
         let size_bytes = u32::from_le_bytes(buffer[4..8].try_into().unwrap());
         let op_count = u32::from_le_bytes(buffer[8..12].try_into().unwrap());
-        let expected_size = ops
-            .iter()
-            .fold(0, |acc, op| acc + op.size_bytes() as u32);
+        let expected_size = ops.iter().fold(0, |acc, op| acc + op.size_bytes() as u32);
 
         assert_eq!(op_count, 4);
         assert_eq!(size_bytes, expected_size);

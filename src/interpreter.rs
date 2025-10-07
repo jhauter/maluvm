@@ -41,6 +41,7 @@ pub struct Interpreter {
     globals: [u32; MAX_GLOBALS],
     args: SmallVec<[u32; MAX_ARGS]>,
     running: bool,
+    assertion_failed: bool,
 }
 
 macro_rules! interpreter_impl_read_op {
@@ -134,7 +135,8 @@ pub mod opcode {
     pub const Extend16_32u: u8 = 0x2f;
     pub const End: u8 = 0x30;
     pub const PushArg: u8 = 0x31;
-
+    pub const DbgAssert: u8 = 0x32;
+    
     pub struct StoreArgs {
         pub addr: u32,
         pub value: u32,
@@ -164,6 +166,7 @@ impl Interpreter {
             globals: [0; _],
             running: false,
             args: SmallVec::new(),
+            assertion_failed: false,
         };
 
         interpreter.init_memory(bytecode);
@@ -536,6 +539,7 @@ impl Interpreter {
                     Ok(())
                 }
             }
+            
             opcode::Return => {
                 println!("return");
                 let last_frame = self
@@ -552,6 +556,18 @@ impl Interpreter {
                         Ok(())
                     }
                 }
+            }
+            opcode::DbgAssert => {
+                let cond = self.pop_bool()?;
+                match cond {
+                    true => self.pc += 1,
+                    false => {
+                        println!("Assertion failed at: {:5x}", self.pc);
+                        self.running = false;
+                        self.assertion_failed = true;
+                    },
+                } 
+                Ok(())
             }
             _ => todo!(),
         }
@@ -648,6 +664,7 @@ mod tests {
         ";
         assert_code_result!(code, &[3]);
     }
+
     #[test]
     fn simple_if_else() {
         let code = "
@@ -675,5 +692,40 @@ mod tests {
         ";
         assert_code_result!(code, &[5]);
     }
+
+    #[test]
+    fn recursion() {
+        let code = "
+            #0; push_arg;
+            #@fn; call;
+            end;
+            :fn:
+            #1; local_get 0; add;
+            local_tee 0; #5; lt;
+            #@fn_rec; jmp_if;
+
+            local_get 0;
+            return; 
+
+            :fn_rec:
+            local_get 0; push_arg;
+            #@fn; call;
+            return;
+        ";
+        assert_code_result!(code, &[5]);
+    }
     
+    #[test]
+    fn assertions() {
+        let code = "
+            #1; #2; add; #1; gt;
+            dbg_assert;
+
+            #10;
+            #5; #2; lt;
+            dbg_assert; 
+            unreachable;
+        ";
+        assert_code_result!(code, &[10]);
+    } 
 }

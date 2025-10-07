@@ -50,7 +50,9 @@ pub enum Op<'src> {
     Extend8_32u,
     Extend16_32u,
     PushArg,
+    DbgAssert,
     End,
+
 }
 
 impl std::fmt::Display for Op<'_> {
@@ -104,6 +106,7 @@ impl std::fmt::Display for Op<'_> {
             Op::Xor => write!(f, "xor"),
             Op::End => write!(f, "end"),
             Op::PushArg => write!(f, "push_arg"),
+            Op::DbgAssert => write!(f, "dbg_assert"),
         }
     }
 }
@@ -159,6 +162,8 @@ impl Op<'_> {
             Op::Extend16_32u => 0x2f,
             Op::End => 0x30,
             Op::PushArg => 0x31,
+            Op::DbgAssert => 0x32,
+
         }
     }
     pub fn size_bytes(&self) -> u8 {
