@@ -1319,6 +1319,7 @@ dependencies = [
  "egui",
  "env_logger",
  "log",
+ "vm",
  "wasm-bindgen-futures",
  "web-sys",
 ]

@@ -209,7 +209,7 @@ impl<'src, 'bump> Parser<'src> {
     pub fn encode_op(&self, op: &'src Op<'src>, dest: &mut Vec<u8>) -> Result<(), AssembleError> {
         dest.push(op.repr());
         match op {
-            Op::LocalGet(num)
+              Op::LocalGet(num)
             | Op::LocalSet(num)
             | Op::LocalTee(num)
             | Op::GlobalGet(num)
