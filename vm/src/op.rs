@@ -39,7 +39,7 @@ pub enum Op<'src> {
     Store16(ArgType<'src>),
     Store32(ArgType<'src>),
     Load8u(ArgType<'src>),
-    Load8s (ArgType<'src>),
+    Load8s(ArgType<'src>),
     Load16s(ArgType<'src>),
     Load16u(ArgType<'src>),
     Load32s(ArgType<'src>),
@@ -52,7 +52,6 @@ pub enum Op<'src> {
     PushArg,
     DbgAssert,
     End,
-
 }
 
 impl std::fmt::Display for Op<'_> {
@@ -163,7 +162,6 @@ impl Op<'_> {
             Op::End => 0x30,
             Op::PushArg => 0x31,
             Op::DbgAssert => 0x32,
-
         }
     }
     pub fn size_bytes(&self) -> u8 {

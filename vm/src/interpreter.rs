@@ -1,6 +1,9 @@
 use smallvec::SmallVec;
 
-use crate::{asm::{self, CODE_START_ADDR_POS}, interpreter::opcode::StoreArgs};
+use crate::{
+    asm::{self, CODE_START_ADDR_POS},
+    interpreter::opcode::StoreArgs,
+};
 
 const INITAL_VALUE_STACK_SIZE: usize = 65536 / 4;
 const INITAL_RETURN_STACK_SIZE: usize = 20;
@@ -136,7 +139,7 @@ pub mod opcode {
     pub const End: u8 = 0x30;
     pub const PushArg: u8 = 0x31;
     pub const DbgAssert: u8 = 0x32;
-    
+
     pub struct StoreArgs {
         pub addr: u32,
         pub value: u32,
@@ -535,7 +538,7 @@ impl Interpreter {
                     Ok(())
                 }
             }
-            
+
             opcode::Return => {
                 let last_frame = self
                     .return_stack
@@ -560,8 +563,8 @@ impl Interpreter {
                         println!("Assertion failed at: {:5x}", self.pc);
                         self.running = false;
                         self.assertion_failed = true;
-                    },
-                } 
+                    }
+                }
                 Ok(())
             }
             _ => todo!(),
@@ -671,7 +674,7 @@ mod tests {
 
         assert_code_result!(code, &[0x25]);
     }
-    
+
     #[test]
     fn simple_loop() {
         let code = "
@@ -709,7 +712,7 @@ mod tests {
         ";
         assert_code_result!(code, &[5]);
     }
-    
+
     #[test]
     fn assertions() {
         let code = "
@@ -723,5 +726,4 @@ mod tests {
         ";
         assert_code_result!(code, &[10]);
     }
-
 }

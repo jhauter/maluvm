@@ -1,8 +1,10 @@
-/// We derive Deserialize/Serialize so we can persist app state on shutdown.
+use crate::code::{self, Editor};
+
 pub struct TemplateApp {
     // Example stuff:
     label: String,
     value: f32,
+    editor: Editor
 }
 
 impl Default for TemplateApp {
@@ -11,6 +13,8 @@ impl Default for TemplateApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
+            editor: Default::default(),
+
         }
     }
 }
@@ -34,6 +38,9 @@ impl eframe::App for TemplateApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
+
+        egui::Window::new("Code")
+            .show(ctx, |ui| self.editor.ui(ui));
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
@@ -96,4 +103,3 @@ fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
         ui.label(".");
     });
 }
-

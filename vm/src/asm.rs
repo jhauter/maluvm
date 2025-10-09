@@ -163,11 +163,10 @@ impl<'src, 'bump> Parser<'src> {
                         elems.push(Elem::Op(op));
                         self.op_count += 1;
                         rest = statement.rest;
-                    },
+                    }
 
                     Some('*') => {
                         let arg = r.chars().next();
-                        
                     }
                     Some(':') => {
                         let (label, label_rest) = self.parse_label(&r[1..])?;
@@ -209,7 +208,7 @@ impl<'src, 'bump> Parser<'src> {
     pub fn encode_op(&self, op: &'src Op<'src>, dest: &mut Vec<u8>) -> Result<(), AssembleError> {
         dest.push(op.repr());
         match op {
-              Op::LocalGet(num)
+            Op::LocalGet(num)
             | Op::LocalSet(num)
             | Op::LocalTee(num)
             | Op::GlobalGet(num)
