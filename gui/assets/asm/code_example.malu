@@ -1,0 +1,13 @@
+:func1: 
+local_get 0;
+local_get 1;
+add;
+return; 
+
+:__ENTRY__:
+#1; push_arg;
+#2; push_arg;
+#@func1;
+call; 
+end;
+

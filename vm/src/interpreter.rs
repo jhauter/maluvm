@@ -186,6 +186,27 @@ impl Interpreter {
         self.memory[..bytecode.len() - 4].copy_from_slice(&bytecode[4..]);
     }
 
+    pub fn reset_all(&mut self, bytecode: &[u8]) -> Result<(), InterpreterErrorType> {
+        is_bytecode_header_valid(bytecode)?;
+
+        self.value_stack.clear();
+        self.return_stack.clear();
+        self.memory.clear();
+        self.globals.fill(0); 
+        self.running = false;
+        self.args.clear();
+        self.assertion_failed = false;
+        
+        self.init_memory(bytecode);
+        self.return_stack.push(Frame::empty());
+
+        let start_code_addr = self.read_u32(CODE_START_ADDR_POS)?;
+        self.pc = start_code_addr;
+        println!("code start addr: {}", self.pc);
+
+        Ok(())
+    }
+
     fn read_u8(&self, addr: u32) -> Result<u8, InterpreterErrorType> {
         self.memory
             .get(addr as usize)

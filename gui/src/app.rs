@@ -4,7 +4,7 @@ pub struct TemplateApp {
     // Example stuff:
     label: String,
     value: f32,
-    editor: Editor
+    editor: Editor,
 }
 
 impl Default for TemplateApp {
@@ -39,9 +39,10 @@ impl eframe::App for TemplateApp {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
+        /*
         egui::Window::new("Code")
             .show(ctx, |ui| self.editor.ui(ui));
-
+        */
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
 
@@ -50,33 +51,40 @@ impl eframe::App for TemplateApp {
                 let is_web = cfg!(target_arch = "wasm32");
                 if !is_web {
                     ui.menu_button("File", |ui| {
+                        ui.button("Save");
+                        ui.button("Load");
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
-                    ui.add_space(16.0);
+                    ui.menu_button("Run", |ui| {
+                        if ui.button("Compile").clicked() {
+                             
+                        }
+
+                        if ui.button("Run").clicked() {
+                        }
+                        ui.button("Pause");
+                        ui.button("Stop");
+                    });
+                    ui.menu_button("Settings", |ui| {
+                        ui.menu_button("Color Scheme", |ui| {
+                            egui::widgets::global_theme_preference_buttons(ui);
+                        });
+                    });
+                    ui.menu_button("Help", |ui| {
+
+                    });
+                    ui.add_space(30.0);
                 }
 
-                egui::widgets::global_theme_preference_buttons(ui);
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
-            });
-
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
-            }
-
-            ui.separator();
-
+            ui.heading("Editor");
+            self.editor.ui(ui);
             ui.add(egui::github_link_file!(
                 "https://github.com/emilk/eframe_template/blob/main/",
                 "Source code."
