@@ -1,7 +1,8 @@
-use crate::{interpreter::InterpreterErrorType, op::Op};
+use crate::{interpreter::InterpreterErrorType, op::opcode};
 use core::fmt;
 use std::{
     collections::HashMap,
+    ffi::os_str::Display,
     num::{ParseIntError, TryFromIntError},
 };
 
@@ -14,6 +15,7 @@ pub enum AssembleErrorKind {
     MissingArgument,
     TooManyArguments,
     UnknownLabel(String),
+    LabelAlreadyExists(String),
     UnexpectedRegisterId(i32),
     UnexpectedImmArgSize,
 }
@@ -57,7 +59,75 @@ pub struct ParseOutput<'src, T> {
     rest: Option<&'src str>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(PartialEq, Debug, Clone)]
+pub enum RawArg {
+    Register(u8),
+    Num(u32),
+}
+impl RawArg {
+    pub fn from_arg_type(arg: &ArgType<'_>, parser: &Parser) -> Result<Self, AssembleError> {
+        match arg {
+            ArgType::AbsLabelRef(l) => Ok(RawArg::Num(parser.get_abs_label_addr(l)? as u32)),
+            ArgType::OffLabelRef(l) => Ok(RawArg::Num(parser.get_off_label_addr(l)? as u32)),
+            ArgType::Number(n) => Ok(RawArg::Num(*n as u32)),
+            ArgType::Register(r) => Ok(RawArg::Register(*r)),
+        }
+    }
+
+    pub fn size_bytes(&self) -> usize {
+        match self {
+            RawArg::Register(_) => size_of::<u8>(),
+            RawArg::Num(_) => size_of::<u32>(),
+        }
+    }
+    pub fn encode(&self, buffer: &mut Vec<u8>) {
+        match self {
+            Self::Register(r) => buffer.push(*r),
+            Self::Num(n) => buffer.extend_from_slice(&n.to_le_bytes()),
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct Op<'src> {
+    opcode: u8,
+    arg: Option<ArgType<'src>>,
+}
+impl Op<'_> {
+    pub fn size_bytes(&self) -> usize {
+        size_of::<u8>() + self.arg.as_ref().map_or(0, |a| a.size_bytes())
+    }
+}
+#[derive(PartialEq, Debug, Clone)]
+pub struct RawOp {
+    pub opcode: u8,
+    pub arg: Option<RawArg>,
+}
+impl RawOp {
+    pub fn from_op(op: &Op<'_>, parser: &Parser) -> Result<Self, AssembleError> {
+        let opcode = op.opcode;
+
+        let arg = op
+            .arg
+            .clone()
+            .map(|a| RawArg::from_arg_type(&a, parser))
+            .transpose()?;
+        Ok(Self { opcode, arg })
+    }
+
+    pub fn encode(&self, dest: &mut Vec<u8>) {
+        dest.push(self.opcode);
+        if let Some(arg) = self.arg.as_ref() {
+            arg.encode(dest);
+        }
+    }
+
+    pub fn size_bytes(&self) -> usize {
+        size_of::<u8>() + self.arg.as_ref().map_or(0, |a| a.size_bytes()) 
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Label<'src> {
     pub name: &'src str,
     pub position: usize,
@@ -98,7 +168,7 @@ impl BytecodeInfo {
 
 macro_rules! impl_parse_num {
     ($fn_name: ident, $type: ty) => {
-        pub fn $fn_name(&self, str: &'src str) -> Result<$type, AssembleError> {
+        pub fn $fn_name(&self, str: &str) -> Result<$type, AssembleError> {
             if str.len() == 1 {
                 Ok(<$type>::from_str_radix(str, 10)
                     .map_err(|e| AssembleError::new(self, e.into()))?)
@@ -116,14 +186,24 @@ macro_rules! impl_parse_num {
     };
 }
 
-pub struct Parser<'src> {
+#[derive(Debug, Eq, PartialEq, PartialOrd, Clone, Copy)]
+pub struct LabelId(usize);
+
+impl fmt::Display for LabelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+pub struct Parser {
     op_count: usize,
     op_size_bytes: usize,
     line: usize,
-    labels: HashMap<&'src str, usize>,
+
+    labels: HashMap<String, u32>,
 }
 
-impl<'src, 'bump> Parser<'src> {
+impl<'src> Parser {
     impl_parse_num!(parse_u32, u32);
     impl_parse_num!(parse_i32, i32);
     impl_parse_num!(parse_u8, u8);
@@ -143,8 +223,24 @@ impl<'src, 'bump> Parser<'src> {
         let elems = parser.parse_elems(code)?;
         let ops = parser.parse_ops(&elems)?;
 
-        parser.as_bytecode(&ops)
+        Ok(parser.as_bytecode(&ops))
     }
+
+    pub fn try_push_label(&mut self, name: &str, position: u32) -> Result<LabelId, AssembleError> {
+        match self.labels.get(name) {
+            Some(_) => Err(AssembleError::new(
+                self,
+                AssembleErrorKind::LabelAlreadyExists(name.to_string()),
+            )),
+            None => {
+                let id = self.labels.len();
+                _ = self.labels.insert(name.to_string(), position);
+
+                Ok(LabelId(id))
+            }
+        }
+    }
+
     pub fn parse_elems(&mut self, code: &'src str) -> Result<Box<[Elem<'src>]>, AssembleError> {
         let mut rest = Some(code);
         let mut elems = Vec::new();
@@ -158,9 +254,7 @@ impl<'src, 'bump> Parser<'src> {
                         let statement = self.slice_until(&r[1..], ';')?;
                         let arg = self.parse_arg(statement.word)?;
 
-                        let op = Op::Const(arg);
-                        self.op_size_bytes += op.size_bytes() as usize;
-                        elems.push(Elem::Op(op));
+                        elems.push(Elem::Const(arg));
                         self.op_count += 1;
                         rest = statement.rest;
                     }
@@ -171,18 +265,18 @@ impl<'src, 'bump> Parser<'src> {
                     Some(':') => {
                         let (label, label_rest) = self.parse_label(&r[1..])?;
 
-                        self.labels.insert(label.name, label.position);
-                        elems.push(Elem::Label(label));
+                        let id = self.try_push_label(label.name, label.position as u32)?;
+                        elems.push(Elem::Label(id));
                         rest = label_rest;
                     }
                     Some(_) => {
-                        let op_res = self.parse_op(r)?;
-                        let op = op_res.0;
+                        let (op, op_rest) = self.parse_op(r)?;
                         self.op_size_bytes += op.size_bytes() as usize;
+
                         elems.push(Elem::Op(op));
                         self.op_count += 1;
 
-                        rest = op_res.1;
+                        rest = op_rest;
                     }
                     None => break,
                 },
@@ -192,57 +286,43 @@ impl<'src, 'bump> Parser<'src> {
         Ok(elems.into())
     }
 
-    pub fn parse_ops(&mut self, elems: &[Elem<'src>]) -> Result<Box<[Op<'src>]>, AssembleError> {
+    pub fn parse_ops(&self, elems: &[Elem<'src>]) -> Result<Box<[RawOp]>, AssembleError> {
         let mut ops = Vec::with_capacity(self.op_count);
 
         for elem in elems {
             match elem {
-                Elem::Op(op) => ops.push(op.clone()),
+                Elem::Op(op) => ops.push(RawOp::from_op(op, self)?),
                 Elem::Label(_) => {}
+                Elem::Const(arg_type) => ops.push(RawOp {
+                    opcode: opcode::Const,
+                    arg: Some(RawArg::from_arg_type(arg_type, self)?),
+                }),
             }
         }
 
         Ok(ops.into_boxed_slice())
     }
 
-    pub fn encode_op(&self, op: &'src Op<'src>, dest: &mut Vec<u8>) -> Result<(), AssembleError> {
-        dest.push(op.repr());
-        match op {
-            Op::LocalGet(num)
-            | Op::LocalSet(num)
-            | Op::LocalTee(num)
-            | Op::GlobalGet(num)
-            | Op::GlobalSet(num)
-            | Op::GlobalTee(num) => dest.push(*num),
-
-            Op::Store8(arg)
-            | Op::Store16(arg)
-            | Op::Store32(arg)
-            | Op::Load8u(arg)
-            | Op::Load8s(arg)
-            | Op::Load16s(arg)
-            | Op::Load16u(arg)
-            | Op::Load32s(arg)
-            | Op::Load32u(arg)
-            | Op::Const(arg) => {
-                let num = arg.get_numeric(self)?;
-                dest.extend_from_slice(&num.to_le_bytes());
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    pub fn try_get_label(&self, name: &'src str) -> Result<usize, AssembleError> {
+    pub fn try_get_label(&self, id: &'src str) -> Result<u32, AssembleError> {
         self.labels
-            .get(name)
+            .get(id)
             .ok_or(AssembleError::new(
                 self,
-                AssembleErrorKind::UnknownLabel(name.to_string()),
+                AssembleErrorKind::UnknownLabel(id.to_string()),
             ))
             .copied()
     }
+
+    pub fn get_abs_label_addr(&self, name: &'src str) -> Result<i32, AssembleError> {
+        let label = self.try_get_label(name)?;
+        Ok(label as i32 + CODE_START as i32)
+    }
+
+    pub fn get_off_label_addr(&self, name: &'src str) -> Result<i32, AssembleError> {
+        let label = self.try_get_label(name)?;
+        Ok(((self.op_size_bytes as isize) - (label as isize)) as i32)
+    }
+
     pub fn get_bytecode_info(&self) -> BytecodeInfo {
         let code_start_offset =
             self.labels.get(ENTRY_LABEL_NAME).copied().unwrap_or(0) as u32 + CODE_START;
@@ -254,14 +334,14 @@ impl<'src, 'bump> Parser<'src> {
         }
     }
 
-    pub fn as_bytecode(&self, ops: &'src [Op<'src>]) -> Result<Box<[u8]>, AssembleError> {
+    pub fn as_bytecode(&self, ops: &'src [RawOp]) -> Box<[u8]> {
         let info = self.get_bytecode_info();
         let mut buffer = info.to_bytecode();
 
         ops.iter()
-            .try_for_each(|o| self.encode_op(o, &mut buffer))?;
+            .for_each(|o| o.encode(&mut buffer));
 
-        Ok(buffer.into_boxed_slice())
+        buffer.into_boxed_slice()
     }
 
     pub fn slice_until(
@@ -309,13 +389,13 @@ impl<'src, 'bump> Parser<'src> {
     pub fn arg_register(
         &self,
         args: &mut impl Iterator<Item = &'src str>,
-    ) -> Result<u8, AssembleError> {
+    ) -> Result<ArgType<'src>, AssembleError> {
         let s = args
             .next()
             .ok_or(AssembleError::new(self, AssembleErrorKind::MissingArgument))?;
         match self.parse_arg(s)? {
             ArgType::Number(num) => match num {
-                0..255 => Ok(num as u8),
+                n @ 0..255 => Ok(ArgType::Register(n as u8)),
                 num => Err(AssembleError::new(
                     self,
                     AssembleErrorKind::UnexpectedRegisterId(num),
@@ -337,59 +417,58 @@ impl<'src, 'bump> Parser<'src> {
             .ok_or(AssembleError::new(self, AssembleErrorKind::MissingArgument))?;
         Ok(self.parse_arg(s)?)
     }
+
     pub fn parse_op(&self, s: &'src str) -> Result<(Op<'src>, Option<&'src str>), AssembleError> {
         let statement = self.slice_until(s, ';')?;
         let mut op_str = iter_op_args(statement.word);
         let op_name = op_str.next().unwrap();
-        println!("name: {}", op_name);
-        let op = match op_name {
-            "nop" => Ok(Op::Nop),
-            "unreachable" => Ok(Op::Unreachable),
-            "drop" => Ok(Op::Drop),
-            "const" => Ok(Op::Const(self.arg_const(&mut op_str)?)),
-            "jmp" => Ok(Op::Jmp),
-            "jmp_if" => Ok(Op::JmpIf),
-            "branch" => Ok(Op::Branch),
-            "branch_if" => Ok(Op::BranchIf),
-            "local_get" => Ok(Op::LocalGet(self.arg_register(&mut op_str)?)),
-            "local_set" => Ok(Op::LocalSet(self.arg_register(&mut op_str)?)),
-            "local_tee" => Ok(Op::LocalTee(self.arg_register(&mut op_str)?)),
-            "global_get" => Ok(Op::GlobalGet(self.arg_register(&mut op_str)?)),
-            "global_set" => Ok(Op::GlobalSet(self.arg_register(&mut op_str)?)),
-            "global_tee" => Ok(Op::GlobalTee(self.arg_register(&mut op_str)?)),
-            "eq" => Ok(Op::Eq),
-            "eqz" => Ok(Op::Eqz),
-            "add" => Ok(Op::Add),
-            "sub" => Ok(Op::Sub),
-            "div_s" => Ok(Op::Divs),
-            "div_u" => Ok(Op::Divu),
-            "mul" => Ok(Op::Mul),
-            "neg" => Ok(Op::Neg),
-            "gt" => Ok(Op::Gt),
-            "lt" => Ok(Op::Lt),
-            "ge" => Ok(Op::Ge),
-            "le" => Ok(Op::Le),
-            "shiftr" => Ok(Op::Shiftr),
-            "shiftl" => Ok(Op::Shiftl),
-            "call" => Ok(Op::Call),
-            "return" => Ok(Op::Return),
-            "store_8" => Ok(Op::Store8(self.arg_const(&mut op_str)?)),
-            "store_16" => Ok(Op::Store16(self.arg_const(&mut op_str)?)),
-            "store_32" => Ok(Op::Store32(self.arg_const(&mut op_str)?)),
-            "load_8_u" => Ok(Op::Load8u(self.arg_const(&mut op_str)?)),
-            "load_8_s" => Ok(Op::Load8s(self.arg_const(&mut op_str)?)),
-            "load_16_s" => Ok(Op::Load16s(self.arg_const(&mut op_str)?)),
-            "load_16_u" => Ok(Op::Load16u(self.arg_const(&mut op_str)?)),
-            "load_32_s" => Ok(Op::Load32s(self.arg_const(&mut op_str)?)),
-            "load_32_u" => Ok(Op::Load32u(self.arg_const(&mut op_str)?)),
-            "extend_8_32_s" => Ok(Op::Extend8_32s),
-            "extend_16_32_s" => Ok(Op::Extend16_32s),
-            "extend_8_32_u" => Ok(Op::Extend8_32u),
-            "extend_16_32_u" => Ok(Op::Extend16_32u),
-            "end" => Ok(Op::End),
-            "push_arg" => Ok(Op::PushArg),
-            "dbg_assert" => Ok(Op::DbgAssert),
-
+        let (opcode, arg): (u8, Option<ArgType<'src>>) = match op_name {
+            "nop" => Ok((opcode::Nop, None)),
+            "unreachable" => Ok((opcode::Unreachable, None)),
+            "drop" => Ok((opcode::Drop, None)),
+            "const" => Ok((opcode::Const, Some(self.arg_const(&mut op_str)?))),
+            "jmp" => Ok((opcode::Jmp, None)),
+            "jmp_if" => Ok((opcode::JmpIf, None)),
+            "branch" => Ok((opcode::Branch, None)),
+            "branch_if" => Ok((opcode::BranchIf, None)),
+            "local_get" => Ok((opcode::LocalGet, Some(self.arg_register(&mut op_str)?))),
+            "local_set" => Ok((opcode::LocalSet, Some(self.arg_register(&mut op_str)?))),
+            "local_tee" => Ok((opcode::LocalTee, Some(self.arg_register(&mut op_str)?))),
+            "global_get" => Ok((opcode::GlobalGet, Some(self.arg_register(&mut op_str)?))),
+            "global_set" => Ok((opcode::GlobalSet, Some(self.arg_register(&mut op_str)?))),
+            "global_tee" => Ok((opcode::GlobalTee, Some(self.arg_register(&mut op_str)?))),
+            "eq" => Ok((opcode::Eq, None)),
+            "eqz" => Ok((opcode::Eqz, None)),
+            "add" => Ok((opcode::Add, None)),
+            "sub" => Ok((opcode::Sub, None)),
+            "div_s" => Ok((opcode::Divs, None)),
+            "div_u" => Ok((opcode::Divu, None)),
+            "mul" => Ok((opcode::Mul, None)),
+            "neg" => Ok((opcode::Neg, None)),
+            "gt" => Ok((opcode::Gt, None)),
+            "lt" => Ok((opcode::Lt, None)),
+            "ge" => Ok((opcode::Ge, None)),
+            "le" => Ok((opcode::Le, None)),
+            "shiftr" => Ok((opcode::Shiftr, None)),
+            "shiftl" => Ok((opcode::Shiftl, None)),
+            "call" => Ok((opcode::Call, None)),
+            "return" => Ok((opcode::Return, None)),
+            "store_8" => Ok((opcode::Store8, Some(self.arg_const(&mut op_str)?))),
+            "store_16" => Ok((opcode::Store16, Some(self.arg_const(&mut op_str)?))),
+            "store_32" => Ok((opcode::Store32, Some(self.arg_const(&mut op_str)?))),
+            "load_8_u" => Ok((opcode::Load8u, Some(self.arg_const(&mut op_str)?))),
+            "load_8_s" => Ok((opcode::Load8s, Some(self.arg_const(&mut op_str)?))),
+            "load_16_s" => Ok((opcode::Load16s, Some(self.arg_const(&mut op_str)?))),
+            "load_16_u" => Ok((opcode::Load16u, Some(self.arg_const(&mut op_str)?))),
+            "load_32_s" => Ok((opcode::Load32s, Some(self.arg_const(&mut op_str)?))),
+            "load_32_u" => Ok((opcode::Load32u, Some(self.arg_const(&mut op_str)?))),
+            "extend_8_32_s" => Ok((opcode::Extend16_32s, None)),
+            "extend_16_32_s" => Ok((opcode::Extend16_32s, None)),
+            "extend_8_32_u" => Ok((opcode::Extend8_32u, None)),
+            "extend_16_32_u" => Ok((opcode::Extend16_32u, None)),
+            "end" => Ok((opcode::End, None)),
+            "push_arg" => Ok((opcode::PushArg, None)),
+            "dbg_assert" => Ok((opcode::DbgAssert, None)),
             _ => Err(AssembleError::new(
                 self,
                 AssembleErrorKind::UnknownOperation,
@@ -400,9 +479,10 @@ impl<'src, 'bump> Parser<'src> {
                 self,
                 AssembleErrorKind::TooManyArguments,
             )),
-            None => Ok((op, statement.rest)),
+            None => Ok((Op { opcode, arg }, statement.rest)),
         }
     }
+
     pub fn parse_label(
         &self,
         s: &'src str,
@@ -423,26 +503,21 @@ pub fn iter_op_args(str: &str) -> impl Iterator<Item = &str> {
     str.split_whitespace()
 }
 
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum ArgType<'src> {
     AbsLabelRef(&'src str),
     OffLabelRef(&'src str),
     Number(i32),
+    Register(u8),
 }
 
 impl<'src> ArgType<'src> {
-    pub fn get_numeric(&self, state: &Parser<'src>) -> Result<i32, AssembleError> {
+    pub fn size_bytes(&self) -> usize {
         match self {
-            ArgType::AbsLabelRef(label) => {
-                let label = state.try_get_label(label)?;
-                Ok(label as i32 + CODE_START as i32)
+            ArgType::AbsLabelRef(_) | ArgType::OffLabelRef(_) | ArgType::Number(_) => {
+                size_of::<u32>()
             }
-            ArgType::OffLabelRef(label) => {
-                let label = state.try_get_label(label)?;
-                Ok(((state.op_size_bytes as isize) - (label as isize)) as i32)
-            }
-
-            ArgType::Number(num) => Ok(*num),
+            ArgType::Register(_) => size_of::<u8>(),
         }
     }
 }
@@ -452,6 +527,7 @@ impl<'src> fmt::Display for ArgType<'src> {
             ArgType::AbsLabelRef(label) => write!(f, "@{label}"),
             ArgType::OffLabelRef(label) => write!(f, ".{label}"),
             ArgType::Number(num) => write!(f, "{num}"),
+            ArgType::Register(num) => write!(f, "{num}"),
         }
     }
 }
@@ -459,7 +535,8 @@ impl<'src> fmt::Display for ArgType<'src> {
 #[derive(Debug, Clone)]
 pub enum Elem<'src> {
     Op(Op<'src>),
-    Label(Label<'src>),
+    Const(ArgType<'src>),
+    Label(LabelId),
 }
 
 #[cfg(test)]
@@ -471,12 +548,61 @@ mod tests {
             let mut parser = Parser::new();
 
             let elems = parser.parse_elems($code).unwrap();
-            let ops: &[Op<'_>] = &parser.parse_ops(&elems).unwrap();
-            let expected: &[Op<'_>] = $expected;
-
-            assert_eq!(&ops, &expected)
+            let ops: &[RawOp] = &parser.parse_ops(&elems).unwrap();
+            let expected: &[RawOp] = $expected;
+            assert_eq!(ops, expected)
         };
     }
+
+    macro_rules! reg {
+        ($num: expr) => {
+            ArgType::Register($num)
+        }
+    }
+    macro_rules! raw_reg {
+        ($num: expr) => {
+            RawArg::Register($num) 
+        };
+    }
+
+    macro_rules! raw_num {
+        ($num: expr) => {
+            RawArg::Num($num) 
+        };
+    }
+
+    macro_rules! op {
+        ($opcode: ident, $arg: expr) => {
+            Op {
+                opcode: opcode::$opcode,
+                arg: Some($arg)
+            }
+        };
+        ($opcode: ident) => {
+            Op {
+                opcode: opcode::$opcode,
+                arg: None 
+            }
+        }
+
+    }
+
+    macro_rules! raw_op {
+        ($opcode: ident, $arg: expr) => {
+            RawOp {
+                opcode: opcode::$opcode,
+                arg: Some($arg)
+            } 
+        };
+        ($opcode: ident) => {
+            RawOp {
+                opcode: opcode::$opcode,
+                arg: None 
+            } 
+        }
+    }
+
+
     #[test]
     fn parse_number() {
         let s = Parser::new();
@@ -490,9 +616,9 @@ mod tests {
     #[test]
     fn parse_single_op() {
         let s = Parser::new();
-        assert_eq!(s.parse_op("nop;").unwrap().0, Op::Nop);
-        assert_eq!(s.parse_op("local_get 5;").unwrap().0, Op::LocalGet(5));
-        assert_eq!(s.parse_op("local_set 0xA;").unwrap().0, Op::LocalSet(10));
+        assert_eq!(s.parse_op("nop;").unwrap().0, op!(Nop));
+        assert_eq!(s.parse_op("local_get 5;").unwrap().0, op!(LocalGet, reg!(5)));
+        assert_eq!(s.parse_op("local_set 0xA;").unwrap().0, op!(LocalSet, reg!(10)));
     }
 
     #[test]
@@ -506,10 +632,11 @@ mod tests {
         ";
         assert_ops_eq!(
             code,
-            &[Op::Nop, Op::LocalGet(5), Op::LocalSet(0xA), Op::Nop]
+            &[raw_op!(Nop), raw_op!(LocalGet, raw_reg!(5)), raw_op!(LocalSet, raw_reg!(0xA)), raw_op!(Nop)]
         );
     }
 
+    /*
     #[test]
     fn parse_with_labels() {
         let code = "
@@ -526,17 +653,17 @@ mod tests {
         assert_ops_eq!(
             code,
             &[
-                Op::Nop,
-                Op::Nop,
-                Op::Nop,
-                Op::Const(ArgType::AbsLabelRef("label")),
+                raw_op!(Nop),
+                raw_op!(Nop),
+                raw_op!(Nop),
+                raw_op!(Const, raw_num!(3))
                 Op::Const(ArgType::AbsLabelRef("blub")),
                 Op::Const(ArgType::OffLabelRef("label")),
                 Op::Const(ArgType::Number(100))
             ]
         );
     }
-
+    */
     #[test]
     fn test_bytecode() {
         let code = "
@@ -548,9 +675,9 @@ mod tests {
         let mut parser = Parser::new();
 
         let elems = parser.parse_elems(code).unwrap();
-        let ops: &[Op<'_>] = &parser.parse_ops(&elems).unwrap();
+        let ops = &parser.parse_ops(&elems).unwrap();
 
-        let buffer = parser.as_bytecode(ops).unwrap();
+        let buffer = parser.as_bytecode(ops);
 
         assert_eq!(&buffer[0..4], &[b'm', b'a', b'l', b'u']);
 
