@@ -14,7 +14,6 @@ impl Default for TemplateApp {
             label: "Hello World!".to_owned(),
             value: 2.7,
             editor: Default::default(),
-
         }
     }
 }
@@ -58,12 +57,9 @@ impl eframe::App for TemplateApp {
                         }
                     });
                     ui.menu_button("Run", |ui| {
-                        if ui.button("Compile").clicked() {
-                             
-                        }
+                        if ui.button("Compile").clicked() {}
 
-                        if ui.button("Run").clicked() {
-                        }
+                        if ui.button("Run").clicked() {}
                         ui.button("Pause");
                         ui.button("Stop");
                     });
@@ -72,12 +68,9 @@ impl eframe::App for TemplateApp {
                             egui::widgets::global_theme_preference_buttons(ui);
                         });
                     });
-                    ui.menu_button("Help", |ui| {
-
-                    });
+                    ui.menu_button("Help", |ui| {});
                     ui.add_space(30.0);
                 }
-
             });
         });
 

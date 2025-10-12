@@ -1,4 +1,4 @@
-use crate::{interpreter::InterpreterErrorType, op::opcode};
+use crate::interpreter::InterpreterErrorType;
 use core::fmt;
 use std::{
     collections::HashMap,
@@ -57,6 +57,64 @@ pub const CODE_START: u32 = (3 * size_of::<u32>()) as u32;
 pub struct ParseOutput<'src, T> {
     word: T,
     rest: Option<&'src str>,
+}
+
+#[allow(non_upper_case_globals)]
+pub mod opcode {
+    pub const Nop: u8 = 0x01;
+    pub const Unreachable: u8 = 0x02;
+    pub const Drop: u8 = 0x03;
+    pub const Const: u8 = 0x04;
+    pub const Jmp: u8 = 0x05;
+    pub const JmpIf: u8 = 0x06;
+    pub const Branch: u8 = 0x07;
+    pub const BranchIf: u8 = 0x08;
+    pub const LocalGet: u8 = 0x09;
+    pub const LocalSet: u8 = 0x0a;
+    pub const LocalTee: u8 = 0x0b;
+    pub const GlobalGet: u8 = 0x0c;
+    pub const GlobalSet: u8 = 0x0e;
+    pub const GlobalTee: u8 = 0x0f;
+    pub const Eq: u8 = 0x10;
+    pub const Eqz: u8 = 0x11;
+    pub const Add: u8 = 0x12;
+    pub const Sub: u8 = 0x13;
+    pub const Divs: u8 = 0x14;
+    pub const Divu: u8 = 0x15;
+    pub const Mul: u8 = 0x16;
+    pub const Neg: u8 = 0x17;
+    pub const Gt: u8 = 0x18;
+    pub const Lt: u8 = 0x19;
+    pub const Ge: u8 = 0x1a;
+    pub const Le: u8 = 0x1b;
+    pub const Shiftr: u8 = 0x1c;
+    pub const Shiftl: u8 = 0x1d;
+    pub const And: u8 = 0x1e;
+    pub const Or: u8 = 0x1f;
+    pub const Xor: u8 = 0x20;
+    pub const Call: u8 = 0x21;
+    pub const Return: u8 = 0x22;
+    pub const Store8: u8 = 0x23;
+    pub const Store16: u8 = 0x24;
+    pub const Store32: u8 = 0x25;
+    pub const Load8u: u8 = 0x26;
+    pub const Load8s: u8 = 0x27;
+    pub const Load16s: u8 = 0x28;
+    pub const Load16u: u8 = 0x29;
+    pub const Load32s: u8 = 0x2a;
+    pub const Load32u: u8 = 0x2b;
+    pub const Extend8_32s: u8 = 0x2c;
+    pub const Extend16_32s: u8 = 0x2d;
+    pub const Extend8_32u: u8 = 0x2e;
+    pub const Extend16_32u: u8 = 0x2f;
+    pub const End: u8 = 0x30;
+    pub const PushArg: u8 = 0x31;
+    pub const DbgAssert: u8 = 0x32;
+
+    pub struct StoreArgs {
+        pub addr: u32,
+        pub value: u32,
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -123,7 +181,7 @@ impl RawOp {
     }
 
     pub fn size_bytes(&self) -> usize {
-        size_of::<u8>() + self.arg.as_ref().map_or(0, |a| a.size_bytes()) 
+        size_of::<u8>() + self.arg.as_ref().map_or(0, |a| a.size_bytes())
     }
 }
 
@@ -251,8 +309,10 @@ impl<'src> Parser {
                     Some('\n') | Some('\r') | Some(' ') => rest = self.skip_whitespace(r),
 
                     Some('#') => {
+                        //TODO: Make this more consistent
                         let statement = self.slice_until(&r[1..], ';')?;
                         let arg = self.parse_arg(statement.word)?;
+                        self.op_size_bytes += 5;
 
                         elems.push(Elem::Const(arg));
                         self.op_count += 1;
@@ -338,8 +398,7 @@ impl<'src> Parser {
         let info = self.get_bytecode_info();
         let mut buffer = info.to_bytecode();
 
-        ops.iter()
-            .for_each(|o| o.encode(&mut buffer));
+        ops.iter().for_each(|o| o.encode(&mut buffer));
 
         buffer.into_boxed_slice()
     }
@@ -557,17 +616,17 @@ mod tests {
     macro_rules! reg {
         ($num: expr) => {
             ArgType::Register($num)
-        }
+        };
     }
     macro_rules! raw_reg {
         ($num: expr) => {
-            RawArg::Register($num) 
+            RawArg::Register($num)
         };
     }
 
     macro_rules! raw_num {
         ($num: expr) => {
-            RawArg::Num($num) 
+            RawArg::Num($num)
         };
     }
 
@@ -575,33 +634,31 @@ mod tests {
         ($opcode: ident, $arg: expr) => {
             Op {
                 opcode: opcode::$opcode,
-                arg: Some($arg)
+                arg: Some($arg),
             }
         };
         ($opcode: ident) => {
             Op {
                 opcode: opcode::$opcode,
-                arg: None 
+                arg: None,
             }
-        }
-
+        };
     }
 
     macro_rules! raw_op {
         ($opcode: ident, $arg: expr) => {
             RawOp {
                 opcode: opcode::$opcode,
-                arg: Some($arg)
-            } 
+                arg: Some($arg),
+            }
         };
         ($opcode: ident) => {
             RawOp {
                 opcode: opcode::$opcode,
-                arg: None 
-            } 
-        }
+                arg: None,
+            }
+        };
     }
-
 
     #[test]
     fn parse_number() {
@@ -617,8 +674,14 @@ mod tests {
     fn parse_single_op() {
         let s = Parser::new();
         assert_eq!(s.parse_op("nop;").unwrap().0, op!(Nop));
-        assert_eq!(s.parse_op("local_get 5;").unwrap().0, op!(LocalGet, reg!(5)));
-        assert_eq!(s.parse_op("local_set 0xA;").unwrap().0, op!(LocalSet, reg!(10)));
+        assert_eq!(
+            s.parse_op("local_get 5;").unwrap().0,
+            op!(LocalGet, reg!(5))
+        );
+        assert_eq!(
+            s.parse_op("local_set 0xA;").unwrap().0,
+            op!(LocalSet, reg!(10))
+        );
     }
 
     #[test]
@@ -632,7 +695,12 @@ mod tests {
         ";
         assert_ops_eq!(
             code,
-            &[raw_op!(Nop), raw_op!(LocalGet, raw_reg!(5)), raw_op!(LocalSet, raw_reg!(0xA)), raw_op!(Nop)]
+            &[
+                raw_op!(Nop),
+                raw_op!(LocalGet, raw_reg!(5)),
+                raw_op!(LocalSet, raw_reg!(0xA)),
+                raw_op!(Nop)
+            ]
         );
     }
 

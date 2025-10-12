@@ -2,7 +2,8 @@ use smallvec::SmallVec;
 
 use crate::{
     asm::{self, CODE_START_ADDR_POS},
-    interpreter::opcode::StoreArgs, op::opcode,
+    interpreter::opcode::StoreArgs,
+    op::opcode,
 };
 
 const INITAL_VALUE_STACK_SIZE: usize = 65536 / 4;
@@ -135,11 +136,11 @@ impl Interpreter {
         self.value_stack.clear();
         self.return_stack.clear();
         self.memory.clear();
-        self.globals.fill(0); 
+        self.globals.fill(0);
         self.running = false;
         self.args.clear();
         self.assertion_failed = false;
-        
+
         self.init_memory(bytecode);
         self.return_stack.push(Frame::empty());
 
@@ -304,11 +305,16 @@ impl Interpreter {
                 self.pc += 1_u32 + size_of::<i32>() as u32;
                 Ok(())
             }
-            opcode::Jmp => Ok(_ = self.exec_jmp()?),
+            opcode::Jmp => {
+                println!("jmp");
+                Ok(_ = self.exec_jmp()?)
+            }
             opcode::JmpIf => {
+                println!("jmp if");
                 let addr = self.pop()?;
 
                 if self.pop_bool()? {
+                    println!("addr: {}", addr);
                     self.try_jump_to(addr)?;
                 } else {
                     self.pc += 1;

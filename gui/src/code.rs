@@ -1,5 +1,5 @@
 use egui_extras::{Column, TableBuilder};
-use vm::op::{self, Op};
+use vm::asm::{self, Op};
 
 pub struct Editor {
     code: String,
@@ -8,8 +8,7 @@ pub struct Editor {
 impl Default for Editor {
     fn default() -> Self {
         Self {
-            code: include_str!("../assets/asm/code_example.malu")
-            .into(),
+            code: include_str!("../assets/asm/code_example.malu").into(),
         }
     }
 }
@@ -30,18 +29,20 @@ impl Editor {
             ui.fonts_mut(|f| f.layout_job(layout_job))
         };
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add(egui::TextEdit::multiline(&mut self.code)
-                .font(egui::TextStyle::Monospace)
-                .code_editor()
-                .desired_rows(5)
-                .lock_focus(true)
-                .desired_width(f32::INFINITY)
-                .layouter(&mut layouter)
+            ui.add(
+                egui::TextEdit::multiline(&mut self.code)
+                    .font(egui::TextStyle::Monospace)
+                    .code_editor()
+                    .desired_rows(5)
+                    .lock_focus(true)
+                    .desired_width(f32::INFINITY)
+                    .layouter(&mut layouter),
             );
         });
     }
 }
 
+/*
 pub fn ui_op_table<'src>(ops: &[Op<'src>], ui: &mut egui::Ui) {
     let text_height = egui::TextStyle::Body
         .resolve(ui.style())
@@ -49,7 +50,7 @@ pub fn ui_op_table<'src>(ops: &[Op<'src>], ui: &mut egui::Ui) {
         .max(ui.spacing().interact_size.y);
 
     let mut current_offset = 0;
-    let table = TableBuilder::new(ui) 
+    let table = TableBuilder::new(ui)
         .striped(true)
         .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -73,20 +74,20 @@ pub fn ui_op_table<'src>(ops: &[Op<'src>], ui: &mut egui::Ui) {
     })
     .body(|body| {
         body.rows(text_height, ops.len(), |mut row| {
-            let row_index = row.index(); 
+            let row_index = row.index();
             let op = &ops[row_index];
             row.col(|ui| {
                 ui.label(row_index.to_string());
             });
             row.col(|ui| {
                 ui.label(format!("{:5x}", current_offset));
-            });                 
+            });
             row.col(|ui| {
                 ui.label(op.to_string());
-            }); 
+            });
 
             current_offset += op.repr();
         });
     });
 }
-
+*/
