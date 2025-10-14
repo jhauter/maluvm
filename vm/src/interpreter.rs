@@ -1,10 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::{
-    asm::{self, CODE_START_ADDR_POS},
-    interpreter::opcode::StoreArgs,
-    op::opcode,
-};
+use crate::asm::{self, opcode::{self, StoreArgs}, CODE_START_ADDR_POS};
 
 const INITAL_VALUE_STACK_SIZE: usize = 65536 / 4;
 const INITAL_RETURN_STACK_SIZE: usize = 20;
@@ -89,6 +85,20 @@ pub fn is_bytecode_header_valid(bytecode: &[u8]) -> Result<(), InterpreterErrorT
     }
 }
 
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self {
+            value_stack: Default::default(),
+            return_stack: Default::default(),
+            memory: Default::default(),
+            pc: Default::default(),
+            globals: [0; _],
+            args: Default::default(),
+            running: Default::default(),
+            assertion_failed: Default::default(),
+        }
+    }
+}
 impl Interpreter {
     interpreter_impl_read_op!(read_u16, u16);
     interpreter_impl_read_op!(read_u32, u32);
@@ -105,17 +115,8 @@ impl Interpreter {
     pub fn from_bytecode(bytecode: &[u8]) -> Result<Self, InterpreterErrorType> {
         is_bytecode_header_valid(bytecode)?;
 
-        let mut interpreter = Interpreter {
-            value_stack: Vec::with_capacity(INITAL_VALUE_STACK_SIZE),
-            return_stack: Vec::with_capacity(INITAL_RETURN_STACK_SIZE),
-            memory: vec![0; bytecode.len() + MIN_HEAP_SIZE],
-            pc: 0,
-            globals: [0; _],
-            running: false,
-            args: SmallVec::new(),
-            assertion_failed: false,
-        };
-
+        let mut interpreter = Interpreter::default(); 
+        interpreter.memory = vec![0; MIN_HEAP_SIZE + bytecode.len()];
         interpreter.init_memory(bytecode);
         interpreter.return_stack.push(Frame::empty());
 
@@ -126,6 +127,8 @@ impl Interpreter {
         Ok(interpreter)
     }
 
+
+
     pub fn init_memory(&mut self, bytecode: &[u8]) {
         self.memory[..bytecode.len() - 4].copy_from_slice(&bytecode[4..]);
     }
@@ -135,7 +138,7 @@ impl Interpreter {
 
         self.value_stack.clear();
         self.return_stack.clear();
-        self.memory.clear();
+        self.memory.fill(0);
         self.globals.fill(0);
         self.running = false;
         self.args.clear();
@@ -377,7 +380,7 @@ impl Interpreter {
             }
             opcode::Add => {
                 println!("add");
-                do_binop!(self, a, b, a + b);
+                do_binop!(self, a, b, a.wrapping_add(b));
                 Ok(())
             }
             opcode::Sub => {
@@ -480,8 +483,8 @@ impl Interpreter {
             }
 
             opcode::Extend8_32s => {
-                let d = self.pop()? as i8 as i32 as u32;
-                self.push(d); //?
+                let d = self.pop()? as i8;
+                self.push(d as i32 as u32); //?
                 self.pc += 1;
                 Ok(())
             }
@@ -496,7 +499,6 @@ impl Interpreter {
                 }
             }
             opcode::Call => {
-                println!("call");
                 let addr = self.pop()?;
                 if addr >= self.memory.len() as u32 {
                     Err(InterpreterErrorType::InvalidJumpAddr(addr))

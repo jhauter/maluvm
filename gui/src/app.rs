@@ -1,12 +1,38 @@
-use crate::code::{self, Editor};
+use vm::{asm, interpreter::Interpreter};
+
+use crate::code::{self, result_table, Editor};
 
 pub struct TemplateApp {
     // Example stuff:
     label: String,
     value: f32,
     editor: Editor,
+    interpreter: Option<Interpreter>,
+    results: Vec<u32> 
 }
+impl TemplateApp {
+    fn compile(&mut self) {
+        //TODO: Error Handling 
+        let text = &self.editor.code;
+        let bytecode = asm::Parser::parse(&text).unwrap(); 
 
+        match self.interpreter {
+            Some(ref mut interpreter) => {
+                interpreter.reset_all(&bytecode).unwrap();
+            }
+            None => {
+                self.interpreter = Some(Interpreter::from_bytecode(&bytecode).unwrap());
+            }
+        } 
+    }
+
+    
+    fn compile_run(&mut self) {
+        self.compile();
+        let i = self.interpreter.as_mut().unwrap(); 
+        i.run().unwrap().clone_into(&mut self.results);
+    }
+}
 impl Default for TemplateApp {
     fn default() -> Self {
         Self {
@@ -14,6 +40,8 @@ impl Default for TemplateApp {
             label: "Hello World!".to_owned(),
             value: 2.7,
             editor: Default::default(),
+            interpreter: None,
+            results: Vec::new(),
         }
     }
 }
@@ -57,11 +85,17 @@ impl eframe::App for TemplateApp {
                         }
                     });
                     ui.menu_button("Run", |ui| {
-                        if ui.button("Compile").clicked() {}
-
-                        if ui.button("Run").clicked() {}
+                        if ui.button("Compile").clicked() {
+                            println!("code: {}", self.editor.code);
+                            self.compile();
+                        }
+        
+                        if ui.button("Compile & Run").clicked() {
+                            self.compile_run()
+                        }
                         ui.button("Pause");
                         ui.button("Stop");
+                        ui.button("Next");
                     });
                     ui.menu_button("Settings", |ui| {
                         ui.menu_button("Color Scheme", |ui| {
@@ -78,6 +112,9 @@ impl eframe::App for TemplateApp {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("Editor");
             self.editor.ui(ui);
+            if self.results.len() > 0 {
+                result_table(ui, &self.results); 
+            }
             ui.add(egui::github_link_file!(
                 "https://github.com/emilk/eframe_template/blob/main/",
                 "Source code."

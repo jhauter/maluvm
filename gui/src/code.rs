@@ -2,7 +2,7 @@ use egui_extras::{Column, TableBuilder};
 use vm::asm::{self, Op};
 
 pub struct Editor {
-    code: String,
+    pub code: String,
 }
 
 impl Default for Editor {
@@ -28,7 +28,7 @@ impl Editor {
             layout_job.wrap.max_width = wrap_width;
             ui.fonts_mut(|f| f.layout_job(layout_job))
         };
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
             ui.add(
                 egui::TextEdit::multiline(&mut self.code)
                     .font(egui::TextStyle::Monospace)
@@ -36,12 +36,63 @@ impl Editor {
                     .desired_rows(5)
                     .lock_focus(true)
                     .desired_width(f32::INFINITY)
+                    .clip_text(true)
                     .layouter(&mut layouter),
+                    
             );
         });
     }
 }
 
+pub fn result_table(ui: &mut egui::Ui, results: &[u32]) {
+    let text_height = egui::TextStyle::Body
+        .resolve(ui.style())
+        .size
+        .max(ui.spacing().interact_size.y);
+    
+    let table = TableBuilder::new(ui)
+        .striped(true)
+        .resizable(false)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::auto())
+        .column(Column::auto())
+        .column(Column::auto())
+        .column(Column::auto());
+
+    table.header(20.0, |mut header| {
+        header.col(|ui| {
+            ui.strong("Index");
+        });
+        header.col(|ui| {
+            ui.strong("Value (Signed)");
+        });
+        header.col(|ui| {
+            ui.strong("Value (Unsigned)");
+        });
+        header.col(|ui| {
+            ui.strong("Value (Hex)");
+        });
+    })
+    .body(|body| {
+        body.rows(text_height, results.len(), |mut row| {
+            let row_index = row.index();
+            let result = results[row_index];
+            row.col(|ui| {
+                ui.label(row_index.to_string());
+            });
+            row.col(|ui| {
+                ui.label(format!("{}", result as i32));
+            });
+            row.col(|ui| {
+                ui.label(format!("{}", result));
+            });
+            row.col(|ui| {
+                ui.label(format!("{:5x}", result));
+            });
+        });
+    });
+
+}
 /*
 pub fn ui_op_table<'src>(ops: &[Op<'src>], ui: &mut egui::Ui) {
     let text_height = egui::TextStyle::Body
