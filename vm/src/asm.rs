@@ -261,6 +261,11 @@ pub struct Parser {
     labels: HashMap<String, u32>,
 }
 
+pub struct ParseResult {
+    pub code: Box<[u8]>, 
+    pub labels: Box<[(String, u32)]>,
+}
+
 impl<'src> Parser {
     impl_parse_num!(parse_u32, u32);
     impl_parse_num!(parse_i32, i32);
@@ -275,13 +280,22 @@ impl<'src> Parser {
         }
     }
 
-    pub fn parse(code: &'src str) -> Result<Box<[u8]>, AssembleError> {
+    pub fn parse(code: &'src str) -> Result<ParseResult, AssembleError> {
         let mut parser = Self::new();
 
         let elems = parser.parse_elems(code)?;
         let ops = parser.parse_ops(&elems)?;
+        let mut labels: Vec<(String, u32)> = parser.labels.iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect::<Vec<_>>();
 
-        Ok(parser.as_bytecode(&ops))
+        labels.sort_by(|(_, v1), (_, v2)| v1.cmp(v2)); 
+            
+        let res = ParseResult {
+            code: parser.as_bytecode(&ops),
+            labels: labels.into_boxed_slice(),
+        };
+        Ok(res)
     }
 
     pub fn try_push_label(&mut self, name: &str, position: u32) -> Result<LabelId, AssembleError> {

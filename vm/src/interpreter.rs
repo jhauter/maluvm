@@ -22,8 +22,8 @@ pub enum InterpreterErrorType {
     UnexpectedEmptyFrameStack,
 }
 pub struct Frame {
-    locals: [u32; MAX_LOCALS],
-    return_addr: u32,
+    pub locals: [u32; MAX_LOCALS],
+    pub return_addr: u32,
 }
 impl Frame {
     pub fn empty() -> Self {
@@ -34,12 +34,12 @@ impl Frame {
     }
 }
 pub struct Interpreter {
-    value_stack: Vec<u32>,
-    return_stack: Vec<Frame>,
-    memory: Vec<u8>,
-    pc: u32,
-    globals: [u32; MAX_GLOBALS],
-    args: SmallVec<[u32; MAX_ARGS]>,
+    pub value_stack: Vec<u32>,
+    pub return_stack: Vec<Frame>,
+    pub memory: Vec<u8>,
+    pub pc: u32,
+    pub globals: [u32; MAX_GLOBALS],
+    pub args: SmallVec<[u32; MAX_ARGS]>,
     running: bool,
     assertion_failed: bool,
 }
@@ -532,7 +532,7 @@ impl Interpreter {
                 match cond {
                     true => self.pc += 1,
                     false => {
-                        println!("Assertion failed at: {:5x}", self.pc);
+                        println!("Assertion failed at: 0x{:4x}", self.pc);
                         self.running = false;
                         self.assertion_failed = true;
                     }
