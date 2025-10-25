@@ -178,6 +178,7 @@ impl RawArg {
             ArgType::OffLabelRef(l) => Ok(RawArg::Num(parser.get_off_label_addr(l)? as u32)),
             ArgType::Number(n) => Ok(RawArg::Num(*n as u32)),
             ArgType::Register(r) => Ok(RawArg::Register(*r)),
+            ArgType::String(_) => todo!()
         }
     }
 
@@ -317,7 +318,6 @@ pub struct Parser {
     op_count: usize,
     op_size_bytes: usize,
     line: usize,
-
     labels: HashMap<String, u32>,
 }
 
@@ -508,8 +508,17 @@ impl<'src> Parser {
         None
     }
 
+    pub fn parse_string(&self, rest: &'src str) -> Result<ParseOutput<'src, &'src str>, AssembleError> {
+        self.slice_until(rest, '"')
+    }
+
     pub fn parse_arg(&self, s: &'src str) -> Result<ArgType<'src>, AssembleError> {
         match s.chars().next().unwrap() {
+            '"' => {
+                //TODO (joh): Was ist mit dem Rest?
+                let res = self.parse_string(&s[1..])?; 
+                Ok(ArgType::String(res.word))  
+            },
             '@' => Ok(ArgType::AbsLabelRef(&s[1..])),
             '.' => Ok(ArgType::OffLabelRef(&s[1..])),
             _ => {
@@ -666,6 +675,7 @@ pub fn iter_op_args(str: &str) -> impl Iterator<Item = &str> {
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum ArgType<'src> {
+    String(&'src str),
     AbsLabelRef(&'src str),
     OffLabelRef(&'src str),
     Number(i32),
@@ -679,6 +689,7 @@ impl<'src> ArgType<'src> {
                 size_of::<u32>()
             }
             ArgType::Register(_) => size_of::<u8>(),
+            ArgType::String(_) => size_of::<u32>(),
         }
     }
 }
@@ -689,6 +700,7 @@ impl<'src> Display for ArgType<'src> {
             ArgType::OffLabelRef(label) => write!(f, ".{label}"),
             ArgType::Number(num) => write!(f, "{num}"),
             ArgType::Register(num) => write!(f, "{num}"),
+            ArgType::String(s) => write!(f, "\"{s}\""),
         }
     }
 }
@@ -857,5 +869,17 @@ mod tests {
 
         assert_eq!(op_count, 4);
         assert_eq!(size_bytes, expected_size);
+    }
+
+    #[test]
+    fn parse_string_args() {
+        let code = r#"
+            #"hallo welt";
+            #5;
+        "#;
+        let mut parser = Parser::new();
+        let elems = parser.parse_elems(code).unwrap();
+        assert!(matches!(elems[0], Elem::Const(ArgType::String("hallo welt"))));
+        assert!(matches!(elems[1], Elem::Const(ArgType::Number(5))));
     }
 }
