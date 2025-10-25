@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::asm::{self, opcode::{self, StoreArgs}, CODE_START_ADDR_POS};
+use crate::asm::{self, opcode::{self, StoreArgs}, CODE_START, CODE_START_ADDR_POS};
 
 const INITAL_VALUE_STACK_SIZE: usize = 65536 / 4;
 const INITAL_RETURN_STACK_SIZE: usize = 20;
@@ -9,8 +9,9 @@ const MAX_GLOBALS: usize = 64;
 const MAX_LOCALS: usize = 64;
 const MAX_ARGS: usize = 12;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum InterpreterErrorType {
+    IOError(std::io::Error),
     InvalidBytecodeHeader,
     AddrOutOfBounds(u32),
     UnexpectedValStackEmpty,
@@ -20,6 +21,11 @@ pub enum InterpreterErrorType {
     InvalidGlobalId(u8),
     ArgStackFull,
     UnexpectedEmptyFrameStack,
+}
+impl From<std::io::Error>  for InterpreterErrorType {
+    fn from(value: std::io::Error) -> Self {
+        Self::IOError(value)
+    }
 }
 pub struct Frame {
     pub locals: [u32; MAX_LOCALS],
@@ -40,8 +46,10 @@ pub struct Interpreter {
     pub pc: u32,
     pub globals: [u32; MAX_GLOBALS],
     pub args: SmallVec<[u32; MAX_ARGS]>,
-    running: bool,
-    assertion_failed: bool,
+    pub start_pc_addr: u32,
+    pub bytecode_len: usize,
+    pub running: bool,
+    pub assertion_failed: bool,
 }
 
 macro_rules! interpreter_impl_read_op {
@@ -96,6 +104,9 @@ impl Default for Interpreter {
             args: Default::default(),
             running: Default::default(),
             assertion_failed: Default::default(),
+            start_pc_addr: 0,
+            bytecode_len: 0,
+            
         }
     }
 }
@@ -119,8 +130,10 @@ impl Interpreter {
         interpreter.memory = vec![0; MIN_HEAP_SIZE + bytecode.len()];
         interpreter.init_memory(bytecode);
         interpreter.return_stack.push(Frame::empty());
-
         let start_code_addr = interpreter.read_u32(CODE_START_ADDR_POS)?;
+        interpreter.start_pc_addr = start_code_addr;
+        interpreter.bytecode_len = bytecode.len();
+
         interpreter.pc = start_code_addr;
         println!("code start addr: {}", interpreter.pc);
 
@@ -143,15 +156,26 @@ impl Interpreter {
         self.running = false;
         self.args.clear();
         self.assertion_failed = false;
-
+        
         self.init_memory(bytecode);
         self.return_stack.push(Frame::empty());
 
         let start_code_addr = self.read_u32(CODE_START_ADDR_POS)?;
         self.pc = start_code_addr;
+        self.start_pc_addr = self.pc;
+        self.bytecode_len = bytecode.len();
+
         println!("code start addr: {}", self.pc);
 
         Ok(())
+    }
+
+    pub fn inital_bytecode(&self) -> &[u8] {
+        &self.memory[CODE_START as usize .. CODE_START as usize + self.bytecode_len as usize]
+    }
+
+    pub fn reset_pc(&mut self) {
+        self.pc = self.start_pc_addr;
     }
 
     fn read_u8(&self, addr: u32) -> Result<u8, InterpreterErrorType> {
@@ -196,6 +220,7 @@ impl Interpreter {
             .ok_or(InterpreterErrorType::UnexpectedValStackEmpty)
             .copied()
     }
+
     pub fn try_jump_to(&mut self, addr: u32) -> Result<(), InterpreterErrorType> {
         if addr >= self.memory.len() as u32 {
             Err(InterpreterErrorType::InvalidJumpAddr(addr))
@@ -482,12 +507,6 @@ impl Interpreter {
                 Ok(())
             }
 
-            opcode::Extend8_32s => {
-                let d = self.pop()? as i8;
-                self.push(d as i32 as u32); //?
-                self.pc += 1;
-                Ok(())
-            }
             opcode::PushArg => {
                 if self.args.len() >= MAX_ARGS {
                     Err(InterpreterErrorType::ArgStackFull)
@@ -563,8 +582,8 @@ mod tests {
     macro_rules! assert_code_result {
         ($code: expr, $expected: expr) => {
             let bytecode = asm::Parser::parse($code).unwrap();
-            assert!(bytecode.len() > 0);
-            let mut interpreter = Interpreter::from_bytecode(&bytecode).unwrap();
+            assert!(bytecode.code.len() > 0);
+            let mut interpreter = Interpreter::from_bytecode(&bytecode.code).unwrap();
 
             let result = interpreter.run().unwrap();
             assert_eq!(result, $expected);
@@ -651,11 +670,16 @@ mod tests {
     fn simple_loop() {
         let code = "
             :loop:
-            #1; local_get 0; add; 
-            local_tee 0; #5; ge;
-            #@end; jmp_if;
-            #@loop; jmp; 
-
+            #1; 
+            local_get 0; 
+            add; 
+            local_tee 0; 
+            #5; 
+            ge;
+            #@end; 
+            jmp_if;
+            #@loop; 
+            jmp; 
             :end:
             local_get 0;
             end;

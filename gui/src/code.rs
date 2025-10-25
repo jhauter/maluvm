@@ -1,7 +1,9 @@
 
-use egui::{ahash::HashMap, text::LayoutJob, Color32, TextFormat, TextStyle};
+use std::io::Cursor;
+
+use egui::{ahash::HashMap, text::LayoutJob, Color32, ScrollArea, TextFormat, TextStyle};
 use egui_extras::{Column, TableBuilder};
-use vm::asm::{self, Op};
+use vm::{asm::{self, Op, RawOp}, parse::{try_parse_ops_from_bytecode, MaybeRawOp}};
 
 use crate::app::CompiledCode;
 
@@ -35,15 +37,15 @@ impl Editor {
             ui.fonts_mut(|f| f.layout_job(layout_job))
         };
 
-        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add(
                 egui::TextEdit::multiline(&mut self.code)
                     .font(egui::TextStyle::Monospace)
                     .hint_text("Enter your code here")
                     .code_editor()
-                    .desired_rows(5)
                     .lock_focus(true)
                     .desired_width(f32::INFINITY)
+                    .desired_rows(30)
                     .clip_text(true)
                     .layouter(&mut layouter),
                      
@@ -61,7 +63,7 @@ pub fn value_table(ui: &mut egui::Ui, results: &[u32], index_name: Option<&str>,
 
     let mut table = TableBuilder::new(ui)
         .striped(true)
-        .resizable(true)
+        .resizable(false)
         .min_scrolled_height(0.0)
         .max_scroll_height(100.0)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -111,7 +113,7 @@ pub fn value_table(ui: &mut egui::Ui, results: &[u32], index_name: Option<&str>,
                 ui.label(format!("{}", result));
             });
             row.col(|ui| {
-                ui.label(format!("0x{:05x}", result));
+                ui.label(format!("0x{:04x}", result));
             });
         });
     });
@@ -172,6 +174,93 @@ pub fn select_label<'a>(ui: &mut egui::Ui, code: &'a CompiledCode) -> Option<usi
     });
 
     selected
+}
+
+pub fn show_mem_op(ui: &mut egui::Ui, code: &CompiledCode) {
+    ScrollArea::vertical().id_salt("grid_scroll").show(ui, |ui| {
+        let text_height = egui::TextStyle::Body
+            .resolve(ui.style())
+            .size
+            .max(ui.spacing().interact_size.y);
+        let pc = code.interpreter.pc;
+        let available_height = ui.available_height();
+
+        let table = TableBuilder::new(ui)
+            .striped(true)
+            .resizable(false)
+            .min_scrolled_height(0.0)
+            .max_scroll_height(available_height)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::auto())
+            .column(Column::auto())
+            .column(Column::auto());
+        table.header(10.0, |mut header| {
+            header.col(|ui| {
+                ui.strong("Offset");
+            });
+            header.col(|ui| {
+                ui.strong("Opcode");
+            });
+            header.col(|ui| {
+                ui.strong("Argument");
+            });
+        })
+        .body(|body| {
+            body.rows(text_height, code.ops.len(), |mut row| {
+                let (op, offset) = &code.ops[row.index()];
+                row.set_selected(pc as usize == *offset as usize);
+                row.col(|ui| {
+                    ui.label(format!("0x{:04x}", offset));
+                });
+                row.col(|ui| {
+                    match op {
+                        MaybeRawOp::Op(raw_op) => {
+                            ui.label(format!("{}", raw_op.name()));
+                        },
+                        MaybeRawOp::Unknown(_) => {
+                            ui.label("???");
+                        },
+                    }
+                });
+                match op {
+                    MaybeRawOp::Op(RawOp {arg: Some(arg), ..}) => {
+                        row.col(|ui| {
+                            ui.label(format!("{}", arg));
+                        });
+                    }
+                    MaybeRawOp::Unknown(v) => {
+                        row.col(|ui| {
+                            ui.label(format!("0x{:04x}", v));
+                        });
+                    }
+                    _ => {
+
+                    }
+                }
+            }); 
+        });  
+
+    //     egui::Grid::new("code grid")
+    //         .striped(true)
+    //         .show(ui, |ui| {
+    //         for (op, offset) in &code.ops {
+    //             ui.label(format!("0x{:04x}", offset));
+    //             match op {
+    //                 MaybeRawOp::Op(o) => {
+    //                     ui.label(format!("{}", o.name()));
+    //                     if let Some(a) = &o.arg {
+    //                         ui.label(format!("{}", a));
+    //                     }
+    //                 },
+    //                 MaybeRawOp::Unknown(u) => {
+    //                     ui.label("???");
+    //                     ui.label(format!("0x{:04x}", u));
+    //                 }
+    //             }
+    //             ui.end_row();
+    //         }
+    //     });
+    });
 }
 /*
 pub fn ui_op_table<'src>(ops: &[Op<'src>], ui: &mut egui::Ui) {

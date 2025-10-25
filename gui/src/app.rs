@@ -1,17 +1,18 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Cursor};
 
 use egui::ScrollArea;
 use vm::{
-    asm,
-    interpreter::{Interpreter, InterpreterErrorType},
+    asm::{self, RawOp, CODE_START},
+    interpreter::{Interpreter, InterpreterErrorType}, parse::{try_parse_ops_from_bytecode, MaybeRawOp},
 };
 
-use crate::code::{self, value_table, select_label, Editor};
+use crate::code::{self, select_label, show_mem_op, value_table, Editor};
 
 pub struct CompiledCode {
     pub interpreter: Interpreter,
     pub labels: Box<[(String, u32)]>,
     pub results: Vec<u32>,
+    pub ops: Vec<(MaybeRawOp, u32)>,
 }
 pub enum AppError {
     InterpreterError(InterpreterErrorType),
@@ -38,8 +39,27 @@ pub struct TemplateApp {
 
     selected_local_slot_slider: usize,
     selected_local_slot: Option<usize>,
+
+    
 }
 impl TemplateApp {
+    fn parse_ops(&mut self) -> Result<(), std::io::Error> {
+        //TODO: Das ist schreklich
+        if let Some(code) = &mut self.code {
+            let mut reader = Cursor::new(code.interpreter.inital_bytecode()); 
+            let mut current_offset = CODE_START; 
+            for op in try_parse_ops_from_bytecode(&mut reader) {
+                let op = op?;
+                code.ops.push((op.clone(), current_offset));
+                current_offset += match &op {
+                    MaybeRawOp::Op(raw_op) => raw_op.size_bytes() as u32,
+                    MaybeRawOp::Unknown(_) => 1,
+                };
+            };
+        };
+        Ok(())
+    }
+
     fn compile(&mut self) -> Result<(), InterpreterErrorType> {
         //TODO: Error Handling
         let text = &self.editor.code;
@@ -53,12 +73,15 @@ impl TemplateApp {
                 Ok(())
             }
             None => {
+                let interpreter = Interpreter::from_bytecode(&bytecode.code)?;
                 let code = CompiledCode {
-                    interpreter: Interpreter::from_bytecode(&bytecode.code)?,
+                    interpreter,
                     labels: bytecode.labels,
                     results: Vec::new(),
+                    ops: Vec::new()
                 };
                 self.code = Some(code);
+                self.parse_ops()?;
                 Ok(())
             }
         }
@@ -173,13 +196,15 @@ impl eframe::App for TemplateApp {
 
         if let Some(code) = &mut self.code {
             egui::SidePanel::left("main_side_left").show(ctx, |ui| {
+                ui.heading("⚙ Debug");
+                ui.separator();
                 ScrollArea::vertical().show(ui, |ui| {
-                        ui.collapsing("Controls", |ui| {
+                        ui.collapsing("⎈ Controls", |ui| {
                             ui.label(format!("PC: 0x{:04x}", code.interpreter.pc));
                             ui.horizontal(|ui| {
-                                ui.button("run");
-                                ui.button("reset");
-                                if ui.button("next").clicked() {
+                                ui.button("▶ run");
+                                ui.button("⏮ reset");
+                                if ui.button("⏩ next").clicked() {
                                     code.interpreter.exec_next_op().unwrap();
                                 }
                             });
@@ -187,20 +212,16 @@ impl eframe::App for TemplateApp {
                         });
 
                         
-                        ui.collapsing("Value Stack", |ui| {
+                        ui.collapsing("⛃ Value Stack", |ui| {
                             let stack = &code.interpreter.value_stack;
-                            value_table(ui, stack, None, None);
-                            ui.separator()
+                            if stack.len() > 0 {
+                                value_table(ui, stack, None, None);
+                                ui.separator();
+                            }
                         });
 
-                        if code.results.len() > 0 {
-                            ui.collapsing("Results", |ui| {
-                                ui.push_id(0, |ui| value_table(ui, &code.results, None, None));
-                                ui.separator();
-                            });
-                        }
 
-                        ui.collapsing("Globals", |ui| {
+                        ui.collapsing("🌐 Globals", |ui| {
                             let slider_response = ui.add(
                                 egui::Slider::new(&mut self.selected_global_slot_slider, 0..=63)
                                 .logarithmic(true)
@@ -218,7 +239,7 @@ impl eframe::App for TemplateApp {
                             ui.separator();
                             
                         });
-                        ui.collapsing("Frames", |ui| {
+                        ui.collapsing("Ｓ Frames", |ui| {
                             for (i, frame) in code.interpreter.return_stack.iter().enumerate() {
                                 ui.collapsing(format!("{}: @0x{:04x}", i, frame.return_addr), |ui| {
                                     let slider_response = ui.add(
@@ -239,7 +260,7 @@ impl eframe::App for TemplateApp {
                                 });
                             } 
                         });
-                        ui.collapsing("Labels", |ui| {
+                        ui.collapsing("🏷 Labels", |ui| {
                             if let Some(index) = select_label(ui, &code) {
                                 let (name, position) = code.labels.get(index).unwrap();
                                 self.jump_dest = Some(*position as usize);
@@ -253,14 +274,20 @@ impl eframe::App for TemplateApp {
                                 }
                             });
                         });
+                        if code.results.len() > 0 {
+                            ui.collapsing("✔ Results", |ui| {
+                                ui.push_id(0, |ui| value_table(ui, &code.results, None, None));
+                                ui.separator();
+                            });
+                        }
                     });
                 });
         }
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("Editor");
+            ui.heading("🖮 Editor");
             self.editor.ui(ui);
-            if let Some(code) = &self.code {}
+
             ui.add(egui::github_link_file!(
                 "https://github.com/emilk/eframe_template/blob/main/",
                 "Source code."
@@ -271,6 +298,13 @@ impl eframe::App for TemplateApp {
                 egui::warn_if_debug_build(ui);
             });
         });
+
+        if let Some(code) = &self.code {
+            egui::SidePanel::right("main_right_side").show(ctx, |ui| {
+                ui.heading("⚡ Code");
+                show_mem_op(ui, code);
+            });
+        };
     }
 }
 

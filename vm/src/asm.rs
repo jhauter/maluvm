@@ -1,8 +1,7 @@
 use crate::interpreter::InterpreterErrorType;
-use core::fmt;
+use core::fmt::{self, Display};
 use std::{
     collections::HashMap,
-    ffi::os_str::Display,
     num::{ParseIntError, TryFromIntError},
 };
 
@@ -61,6 +60,7 @@ pub struct ParseOutput<'src, T> {
 
 #[allow(non_upper_case_globals)]
 pub mod opcode {
+    pub const DbgHalt: u8 = 0x00;
     pub const Nop: u8 = 0x01;
     pub const Unreachable: u8 = 0x02;
     pub const Drop: u8 = 0x03;
@@ -73,50 +73,99 @@ pub mod opcode {
     pub const LocalSet: u8 = 0x0a;
     pub const LocalTee: u8 = 0x0b;
     pub const GlobalGet: u8 = 0x0c;
-    pub const GlobalSet: u8 = 0x0e;
-    pub const GlobalTee: u8 = 0x0f;
-    pub const Eq: u8 = 0x10;
-    pub const Eqz: u8 = 0x11;
-    pub const Add: u8 = 0x12;
-    pub const Sub: u8 = 0x13;
-    pub const Divs: u8 = 0x14;
-    pub const Divu: u8 = 0x15;
-    pub const Mul: u8 = 0x16;
-    pub const Neg: u8 = 0x17;
-    pub const Gt: u8 = 0x18;
-    pub const Lt: u8 = 0x19;
-    pub const Ge: u8 = 0x1a;
-    pub const Le: u8 = 0x1b;
-    pub const Shiftr: u8 = 0x1c;
-    pub const Shiftl: u8 = 0x1d;
-    pub const And: u8 = 0x1e;
-    pub const Or: u8 = 0x1f;
-    pub const Xor: u8 = 0x20;
-    pub const Call: u8 = 0x21;
-    pub const Return: u8 = 0x22;
-    pub const Store8: u8 = 0x23;
-    pub const Store16: u8 = 0x24;
-    pub const Store32: u8 = 0x25;
-    pub const Load8u: u8 = 0x26;
-    pub const Load8s: u8 = 0x27;
-    pub const Load16s: u8 = 0x28;
-    pub const Load16u: u8 = 0x29;
-    pub const Load32s: u8 = 0x2a;
-    pub const Load32u: u8 = 0x2b;
-    pub const Extend8_32s: u8 = 0x2c;
-    pub const Extend16_32s: u8 = 0x2d;
-    pub const Extend8_32u: u8 = 0x2e;
-    pub const Extend16_32u: u8 = 0x2f;
-    pub const End: u8 = 0x30;
-    pub const PushArg: u8 = 0x31;
-    pub const DbgAssert: u8 = 0x32;
+    pub const GlobalSet: u8 = 0x0d;
+    pub const GlobalTee: u8 = 0x0e;
+    pub const Eq: u8 = 0x0f;
+    pub const Eqz: u8 = 0x10;
+    pub const Add: u8 = 0x11;
+    pub const Sub: u8 = 0x12;
+    pub const Divs: u8 = 0x13;
+    pub const Divu: u8 = 0x14;
+    pub const Mul: u8 = 0x15;
+    pub const Neg: u8 = 0x16;
+    pub const Gt: u8 = 0x17;
+    pub const Lt: u8 = 0x18;
+    pub const Ge: u8 = 0x19;
+    pub const Le: u8 = 0x11;
+    pub const Shiftr: u8 = 0x1b;
+    pub const Shiftl: u8 = 0x1c;
+    pub const And: u8 = 0x1d;
+    pub const Or: u8 = 0x1e;
+    pub const Xor: u8 = 0x1f;
+    pub const Call: u8 = 0x20;
+    pub const Return: u8 = 0x21;
+    pub const Store8: u8 = 0x22;
+    pub const Store16: u8 = 0x23;
+    pub const Store32: u8 = 0x24;
+    pub const Load8u: u8 = 0x25;
+    pub const Load8s: u8 = 0x26;
+    pub const Load16s: u8 = 0x27;
+    pub const Load16u: u8 = 0x28;
+    pub const Load32s: u8 = 0x29;
+    pub const Load32u: u8 = 0x2a;
+    pub const End: u8 = 0x2b;
+    pub const PushArg: u8 = 0x2c;
+    pub const DbgAssert: u8 = 0x2d;
+
+    pub const Names: [&'static str; DbgAssert as usize + 1] = [
+        "dbg_halt",
+        "nop", 
+        "unreachable", 
+        "drop",
+        "const", 
+        "jmp", 
+        "jmp_if", 
+        "branch",
+        "branch_if", 
+        "local_get", 
+        "local_set",
+        "local_tee", 
+        "global_get",
+        "global_set", 
+        "global_tee", 
+        "eq",
+        "eqz", 
+        "add", 
+        "sub", 
+        "div_s", 
+        "div_u",
+        "mul", 
+        "neg", 
+        "gt", 
+        "lt", 
+        "ge", 
+        "le",
+        "shift_r", 
+        "shift_l", 
+        "and", 
+        "or",
+        "xor", 
+        "call", 
+        "return", 
+        "store_8",
+        "store_16", 
+        "store_32", 
+        "load_8_u", 
+        "load_8_s", 
+        "load_16_s",
+        "load_16_u", 
+        "load_32_s",
+        "load_32_u", 
+        "end", 
+        "push_arg",
+        "dbg_assert"
+    ];
 
     pub struct StoreArgs {
         pub addr: u32,
         pub value: u32,
     }
 }
-
+macro_rules! op_name {
+    ($op: ident) => {
+        opcode::Names[opcode::$op as usize]  
+    };
+}
 #[derive(PartialEq, Debug, Clone)]
 pub enum RawArg {
     Register(u8),
@@ -145,7 +194,14 @@ impl RawArg {
         }
     }
 }
-
+impl Display for RawArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RawArg::Register(r) => write!(f, "r{r}"),
+            RawArg::Num(n) => write!(f, "0x{:04x}", n),
+        }
+    }
+} 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Op<'src> {
     opcode: u8,
@@ -182,6 +238,10 @@ impl RawOp {
 
     pub fn size_bytes(&self) -> usize {
         size_of::<u8>() + self.arg.as_ref().map_or(0, |a| a.size_bytes())
+    }
+
+    pub fn name(&self) -> &'static str {
+        opcode::Names[self.opcode as usize]
     }
 }
 
@@ -247,7 +307,7 @@ macro_rules! impl_parse_num {
 #[derive(Debug, Eq, PartialEq, PartialOrd, Clone, Copy)]
 pub struct LabelId(usize);
 
-impl fmt::Display for LabelId {
+impl Display for LabelId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -332,7 +392,6 @@ impl<'src> Parser {
                         self.op_count += 1;
                         rest = statement.rest;
                     }
-
                     Some('*') => {
                         let arg = r.chars().next();
                     }
@@ -494,59 +553,88 @@ impl<'src> Parser {
     pub fn parse_op(&self, s: &'src str) -> Result<(Op<'src>, Option<&'src str>), AssembleError> {
         let statement = self.slice_until(s, ';')?;
         let mut op_str = iter_op_args(statement.word);
+        macro_rules! op {
+            ($op: ident, Register) => {
+                Ok((opcode::$op, Some(self.arg_register(&mut op_str)?))) 
+            };
+
+            ($op: ident, Number) => {
+                Ok((opcode::$op, Some(self.arg_const(&mut op_str)?))) 
+            };
+            ($op: ident, None) => {
+                {
+                    let a: Option<ArgType<'src>> = None;
+                    Ok((opcode::$op, a)) 
+                }
+            };
+
+            ($op: ident) => {
+                {
+                    let a: Option<ArgType<'src>> = None;
+                    Ok((opcode::$op, a)) 
+                }
+            };
+        }
+
         let op_name = op_str.next().unwrap();
-        let (opcode, arg): (u8, Option<ArgType<'src>>) = match op_name {
-            "nop" => Ok((opcode::Nop, None)),
-            "unreachable" => Ok((opcode::Unreachable, None)),
-            "drop" => Ok((opcode::Drop, None)),
-            "const" => Ok((opcode::Const, Some(self.arg_const(&mut op_str)?))),
-            "jmp" => Ok((opcode::Jmp, None)),
-            "jmp_if" => Ok((opcode::JmpIf, None)),
-            "branch" => Ok((opcode::Branch, None)),
-            "branch_if" => Ok((opcode::BranchIf, None)),
-            "local_get" => Ok((opcode::LocalGet, Some(self.arg_register(&mut op_str)?))),
-            "local_set" => Ok((opcode::LocalSet, Some(self.arg_register(&mut op_str)?))),
-            "local_tee" => Ok((opcode::LocalTee, Some(self.arg_register(&mut op_str)?))),
-            "global_get" => Ok((opcode::GlobalGet, Some(self.arg_register(&mut op_str)?))),
-            "global_set" => Ok((opcode::GlobalSet, Some(self.arg_register(&mut op_str)?))),
-            "global_tee" => Ok((opcode::GlobalTee, Some(self.arg_register(&mut op_str)?))),
-            "eq" => Ok((opcode::Eq, None)),
-            "eqz" => Ok((opcode::Eqz, None)),
-            "add" => Ok((opcode::Add, None)),
-            "sub" => Ok((opcode::Sub, None)),
-            "div_s" => Ok((opcode::Divs, None)),
-            "div_u" => Ok((opcode::Divu, None)),
-            "mul" => Ok((opcode::Mul, None)),
-            "neg" => Ok((opcode::Neg, None)),
-            "gt" => Ok((opcode::Gt, None)),
-            "lt" => Ok((opcode::Lt, None)),
-            "ge" => Ok((opcode::Ge, None)),
-            "le" => Ok((opcode::Le, None)),
-            "shiftr" => Ok((opcode::Shiftr, None)),
-            "shiftl" => Ok((opcode::Shiftl, None)),
-            "call" => Ok((opcode::Call, None)),
-            "return" => Ok((opcode::Return, None)),
-            "store_8" => Ok((opcode::Store8, Some(self.arg_const(&mut op_str)?))),
-            "store_16" => Ok((opcode::Store16, Some(self.arg_const(&mut op_str)?))),
-            "store_32" => Ok((opcode::Store32, Some(self.arg_const(&mut op_str)?))),
-            "load_8_u" => Ok((opcode::Load8u, Some(self.arg_const(&mut op_str)?))),
-            "load_8_s" => Ok((opcode::Load8s, Some(self.arg_const(&mut op_str)?))),
-            "load_16_s" => Ok((opcode::Load16s, Some(self.arg_const(&mut op_str)?))),
-            "load_16_u" => Ok((opcode::Load16u, Some(self.arg_const(&mut op_str)?))),
-            "load_32_s" => Ok((opcode::Load32s, Some(self.arg_const(&mut op_str)?))),
-            "load_32_u" => Ok((opcode::Load32u, Some(self.arg_const(&mut op_str)?))),
-            "extend_8_32_s" => Ok((opcode::Extend16_32s, None)),
-            "extend_16_32_s" => Ok((opcode::Extend16_32s, None)),
-            "extend_8_32_u" => Ok((opcode::Extend8_32u, None)),
-            "extend_16_32_u" => Ok((opcode::Extend16_32u, None)),
-            "end" => Ok((opcode::End, None)),
-            "push_arg" => Ok((opcode::PushArg, None)),
-            "dbg_assert" => Ok((opcode::DbgAssert, None)),
-            _ => Err(AssembleError::new(
-                self,
-                AssembleErrorKind::UnknownOperation,
-            )),
-        }?;
+        macro_rules! op_p {
+            ($(($op: ident, $e: tt)),+) => {
+                match op_name {
+                    $(n if n == op_name!($op) => op!($op, $e)),+,
+                    _ => Err(AssembleError::new(
+                        self,
+                        AssembleErrorKind::UnknownOperation)),
+                }
+            };
+        }
+
+        let (opcode, arg): (u8, Option<ArgType<'src>>) = op_p!(
+            (DbgHalt, None),
+            (Nop, None),
+            (Unreachable, None),
+            (Drop, None),
+            (Const, Number),
+            (Jmp, None),
+            (JmpIf, None),
+            (Branch, None),
+            (LocalGet, Register),
+            (LocalSet, Register),
+            (LocalTee, Register),
+            (GlobalGet, Register),
+            (GlobalSet, Register),
+            (GlobalTee, Register),
+            (Eq, None),
+            (Eqz, None),
+            (Add, None),
+            (Sub, None),
+            (Divs, None),
+            (Divu, None),
+            (Mul, None),
+            (Neg, None),
+            (Ge, None),
+            (Gt, None),
+            (Lt, None),
+            (Le, None),
+            (Shiftr, None),
+            (Shiftl, None),
+            (And, None),
+            (Or, None),
+            (Xor, None),
+            (Call, None),
+            (Return, None),
+            (Store8, Number),
+            (Store16, Number),
+            (Store32, Number),
+            (Load8u, Number),
+            (Load8s, Number),
+            (Load16s, Number),
+            (Load16u, Number),
+            (Load32s, Number),
+            (Load32u, Number),
+            (End, None),
+            (PushArg, None),
+            (DbgAssert, None)
+        )?;
         match op_str.next() {
             Some(_) => Err(AssembleError::new(
                 self,
@@ -594,7 +682,7 @@ impl<'src> ArgType<'src> {
         }
     }
 }
-impl<'src> fmt::Display for ArgType<'src> {
+impl<'src> Display for ArgType<'src> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ArgType::AbsLabelRef(label) => write!(f, "@{label}"),
