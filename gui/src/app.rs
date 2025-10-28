@@ -47,7 +47,7 @@ pub struct TemplateApp {
 
     selected_local_slot_slider: usize,
     selected_local_slot: Option<usize>,
-    syscall_data: Env, 
+    env: Env, 
 
 }
 #[allow(non_upper_case_globals)]
@@ -147,7 +147,7 @@ impl TemplateApp {
     fn compile_run(&mut self) -> Result<(), InterpreterErrorType> {
         self.compile()?;
         let code = self.code.as_mut().unwrap();
-        code.interpreter.run(&mut self.syscall_data).unwrap().clone_into(&mut code.results);
+        code.interpreter.run(&mut self.env).unwrap().clone_into(&mut code.results);
         
         Ok(())
     }
@@ -167,7 +167,7 @@ impl Default for TemplateApp {
             selected_global_slot: None,
             selected_local_slot_slider: 0, 
             selected_local_slot: None,
-            syscall_data: Default::default(),
+            env: Default::default(),
         }
     }
 }
@@ -264,7 +264,7 @@ impl eframe::App for TemplateApp {
                                 ui.button("▶ run");
                                 ui.button("⏮ reset");
                                 if ui.button("⏩ next").clicked() {
-                                    code.interpreter.exec_next_op(&mut self.syscall_data).unwrap();
+                                    code.interpreter.exec_next_op(&mut self.env).unwrap();
                                 }
                             });
                             ui.separator();
@@ -364,7 +364,7 @@ impl eframe::App for TemplateApp {
                 .resizable(true)
                 .show(ctx, |ui| {
                 ui.heading("📝 Log");
-                //let text_response = ui.text_edit_multiline(&mut self.log.as_str());
+                let text_response = ui.text_edit_multiline(&mut self.env.log.as_str());
                 
             });
         };

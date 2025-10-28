@@ -423,6 +423,10 @@ impl Interpreter {
                 self.pc += 2;
                 Ok(())
             }
+            opcode::Eq => {
+                do_binop!(self, a, b, a == b);
+                Ok(())
+            }
             opcode::Add => {
                 println!("add");
                 do_binop!(self, a, b, a.wrapping_add(b));
@@ -506,8 +510,9 @@ impl Interpreter {
             opcode::Load8u => {
                 let offset = self.read_imm_u32(1)?;
                 let addr = offset + self.pop()?;
-
-                self.push(self.read_u8(addr)? as u32);
+                let val = self.read_u8(addr)? as u32;
+                println!("reading: {}, offset: {offset}", val);
+                self.push(val);
                 self.pc += 5;
                 Ok(())
             }
@@ -569,9 +574,12 @@ impl Interpreter {
             opcode::DbgAssert => {
                 let cond = self.pop_bool()?;
                 match cond {
-                    true => self.pc += 1,
+                    true => {
+                        println!("assertion ok");
+                        self.pc += 1;
+                    }
                     false => {
-                        println!("Assertion failed at: 0x{:4x}", self.pc);
+                        println!("Assertion failed at: {}", self.pc);
                         self.running = false;
                         self.assertion_failed = true;
                     }
@@ -778,5 +786,36 @@ mod tests {
         "; 
         assert_code_result!(code, &[1]);
     }
+    
+    #[test]
+    fn strings() {
+        let code = r#"
+            #"abc";
+            local_set 0;
+            local_get 0; 
+            load_32_u 0; 
+            #3; 
+            eq; 
+            dbg_assert;
+            local_get 0; 
+            load_8_u 4; 
+            #97; 
+            eq; 
+            dbg_assert;
+            local_get 0; 
+            load_8_u 5; 
+            #98; 
+            eq; 
+            dbg_assert;
+            local_get 0; 
+            load_8_u 6; 
+            #99; 
+            eq; 
+            dbg_assert;
+            #9; 
+            end; 
+        "#;
+        assert_code_result!(code, &[9]);
 
+    }
 }

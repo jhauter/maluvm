@@ -392,10 +392,12 @@ impl<'src> Parser {
     }
 
     pub fn push_string_literal(&mut self, str: &'src str) -> u32 {
+        println!("pushing string");
         let offset = self.data.len();
 
-        self.data.extend_from_slice(&str.len().to_le_bytes());
+        self.data.extend_from_slice(&(str.len() as u32).to_le_bytes());
         self.data.extend_from_slice(str.as_bytes());
+        println!("{:?}", self.data);
         self.string_literals.insert(str.to_string(), offset as u32);
         
         offset as u32
