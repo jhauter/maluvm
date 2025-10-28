@@ -27,6 +27,11 @@ impl From<InterpreterErrorType> for AppError {
 pub struct Env {
     log: String,
 }
+impl Default for Env {
+    fn default() -> Self {
+        Self { log: Default::default() }
+    }
+}
 pub struct TemplateApp {
     // Example stuff:
     label: String,
@@ -43,7 +48,6 @@ pub struct TemplateApp {
     selected_local_slot_slider: usize,
     selected_local_slot: Option<usize>,
     syscall_data: Env, 
-    log: String,
 
 }
 #[allow(non_upper_case_globals)]
@@ -143,7 +147,7 @@ impl TemplateApp {
     fn compile_run(&mut self) -> Result<(), InterpreterErrorType> {
         self.compile()?;
         let code = self.code.as_mut().unwrap();
-        let results = code.interpreter.run(&mut self.syscall_data).unwrap().clone_into(&mut self.results);
+        code.interpreter.run(&mut self.syscall_data).unwrap().clone_into(&mut code.results);
         
         Ok(())
     }
@@ -163,7 +167,7 @@ impl Default for TemplateApp {
             selected_global_slot: None,
             selected_local_slot_slider: 0, 
             selected_local_slot: None,
-            log: String::new(),
+            syscall_data: Default::default(),
         }
     }
 }
@@ -360,7 +364,7 @@ impl eframe::App for TemplateApp {
                 .resizable(true)
                 .show(ctx, |ui| {
                 ui.heading("📝 Log");
-                let text_response = ui.text_edit_multiline(&mut self.log.as_str());
+                //let text_response = ui.text_edit_multiline(&mut self.log.as_str());
                 
             });
         };

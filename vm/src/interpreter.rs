@@ -581,10 +581,12 @@ impl Interpreter {
             opcode::Syscall => {
                 let id = self.pop()?;
                 let args = self.args.clone(); 
+                println!("syscall args {:?}", args);
                 let ret = syscall_handler.on_syscall(self, id, args.as_slice());       
                 self.args.clear(); 
 
                 self.push(ret);
+                self.pc += 1;
                 Ok(())
             }
             _ => todo!(),
@@ -610,8 +612,17 @@ mod tests {
 
     struct DummySyscallHandler();
     impl SyscallHandler for DummySyscallHandler {
-        fn on_syscall(&mut self, _: &mut Interpreter, _: u32, _: &[u32]) -> u32 {
-            return 0
+        fn on_syscall(&mut self, _: &mut Interpreter, id: u32, args: &[u32]) -> u32 {
+            match id {
+                1 => {
+                    if args[0] == 1 && args[1] == 2 {
+                        1
+                    } else {
+                        0
+                    }
+                } 
+                _ => 0,
+            }
         }
     }
     macro_rules! assert_code_result {
@@ -757,4 +768,15 @@ mod tests {
         ";
         assert_code_result!(code, &[10]);
     }
+    #[test]
+    fn simple_syscall() {
+        let code = "
+            #1; push_arg;
+            #2; push_arg;
+            #1; syscall;
+            end;
+        "; 
+        assert_code_result!(code, &[1]);
+    }
+
 }

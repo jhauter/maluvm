@@ -107,9 +107,9 @@ pub mod opcode {
     pub const End: u8 = 0x2b;
     pub const PushArg: u8 = 0x2c;
     pub const DbgAssert: u8 = 0x2d;
-    pub const Syscall: u8 = 0x2f;
+    pub const Syscall: u8 = 0x2e;
 
-    pub const Names: [&'static str; Syscall as usize] = [
+    pub const Names: [&'static str; Syscall as usize + 1] = [
         "dbg_halt",
         "nop", 
         "unreachable", 
@@ -157,7 +157,6 @@ pub mod opcode {
         "push_arg",
         "dbg_assert",
         "syscall",
-        
     ];
 
     pub struct StoreArgs {
@@ -644,6 +643,7 @@ impl<'src> Parser {
             (Jmp, None),
             (JmpIf, None),
             (Branch, None),
+            (BranchIf, None),
             (LocalGet, Register),
             (LocalSet, Register),
             (LocalTee, Register),
@@ -658,9 +658,9 @@ impl<'src> Parser {
             (Divu, None),
             (Mul, None),
             (Neg, None),
-            (Ge, None),
             (Gt, None),
             (Lt, None),
+            (Ge, None),
             (Le, None),
             (Shiftr, None),
             (Shiftl, None),
@@ -680,7 +680,8 @@ impl<'src> Parser {
             (Load32u, Number),
             (End, None),
             (PushArg, None),
-            (DbgAssert, None)
+            (DbgAssert, None),
+            (Syscall, None)
         )?;
         match op_str.next() {
             Some(_) => Err(AssembleError::new(
