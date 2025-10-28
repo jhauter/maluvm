@@ -2,8 +2,8 @@ use std::{collections::HashMap, io::Cursor};
 
 use egui::ScrollArea;
 use vm::{
-    asm::{self, RawOp, CODE_START},
-    interpreter::{Interpreter, InterpreterErrorType}, parse::{try_parse_ops_from_bytecode, MaybeRawOp},
+    asm::{self, RawOp, DATA_START},
+    interpreter::{self, Interpreter, InterpreterErrorType, SyscallHandler}, parse::{try_parse_ops_from_bytecode, MaybeRawOp},
 };
 
 use crate::code::{self, select_label, show_mem_op, value_table, Editor};
@@ -24,6 +24,9 @@ impl From<InterpreterErrorType> for AppError {
     }
 }
 
+pub struct Env {
+    log: String,
+}
 pub struct TemplateApp {
     // Example stuff:
     label: String,
@@ -39,15 +42,65 @@ pub struct TemplateApp {
 
     selected_local_slot_slider: usize,
     selected_local_slot: Option<usize>,
+    syscall_data: Env, 
+    log: String,
 
-    
+}
+#[allow(non_upper_case_globals)]
+pub mod syscall {
+    pub const PrintDebugString: u32  = 0x00;   
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum EnvError {
+    InvalidMemAddr = 1,
+    InvalidStringData = 2, 
+
+    Unknown = 99,
+}
+impl EnvError {
+    pub fn as_return_code(result: Result<(), EnvError>) -> u32 {
+        match result {
+            Ok(_) => 0,
+            Err(e) => e as u32,
+        } 
+    }
+}
+impl From<InterpreterErrorType> for EnvError {
+    fn from(value: InterpreterErrorType) -> Self {
+        match value {
+            InterpreterErrorType::InvalidStringData(_) => Self::InvalidStringData,
+            InterpreterErrorType::AddrOutOfBounds(_) => Self::InvalidMemAddr,
+            _ => EnvError::Unknown
+        }
+    }
+}
+impl Env {
+    fn print_debug_string(&mut self, interpreter: &mut Interpreter, addr: u32, len: u32) -> Result<(), EnvError> {
+        let string_data = interpreter.read_str(addr, len)?;
+        self.log.push_str(string_data);
+        Ok(())
+    }
+}
+impl SyscallHandler for Env {
+    fn on_syscall(&mut self, interpreter: &mut Interpreter, id: u32, args: &[u32]) -> u32 {
+        match id {
+            syscall::PrintDebugString => {
+                let addr = args[0];
+                let len = args[1];
+
+                EnvError::as_return_code(self.print_debug_string(interpreter, addr, len))
+            }
+            _ => 0  
+        }
+    }
 }
 impl TemplateApp {
     fn parse_ops(&mut self) -> Result<(), std::io::Error> {
         //TODO: Das ist schreklich
         if let Some(code) = &mut self.code {
             let mut reader = Cursor::new(code.interpreter.inital_bytecode()); 
-            let mut current_offset = CODE_START; 
+            let mut current_offset = DATA_START; 
             for op in try_parse_ops_from_bytecode(&mut reader) {
                 let op = op?;
                 code.ops.push((op.clone(), current_offset));
@@ -89,8 +142,9 @@ impl TemplateApp {
 
     fn compile_run(&mut self) -> Result<(), InterpreterErrorType> {
         self.compile()?;
-        let i = self.code.as_mut().unwrap();
-        i.interpreter.run().unwrap().clone_into(&mut i.results);
+        let code = self.code.as_mut().unwrap();
+        let results = code.interpreter.run(&mut self.syscall_data).unwrap().clone_into(&mut self.results);
+        
         Ok(())
     }
 }
@@ -109,6 +163,7 @@ impl Default for TemplateApp {
             selected_global_slot: None,
             selected_local_slot_slider: 0, 
             selected_local_slot: None,
+            log: String::new(),
         }
     }
 }
@@ -205,7 +260,7 @@ impl eframe::App for TemplateApp {
                                 ui.button("▶ run");
                                 ui.button("⏮ reset");
                                 if ui.button("⏩ next").clicked() {
-                                    code.interpreter.exec_next_op().unwrap();
+                                    code.interpreter.exec_next_op(&mut self.syscall_data).unwrap();
                                 }
                             });
                             ui.separator();
@@ -283,15 +338,11 @@ impl eframe::App for TemplateApp {
                     });
                 });
         }
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default()
+            .show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("🖮 Editor");
             self.editor.ui(ui);
-
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/main/",
-                "Source code."
-            ));
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 powered_by_egui_and_eframe(ui);
@@ -304,7 +355,16 @@ impl eframe::App for TemplateApp {
                 ui.heading("⚡ Code");
                 show_mem_op(ui, code);
             });
+
+            egui::TopBottomPanel::bottom("main_bottom_side")
+                .resizable(true)
+                .show(ctx, |ui| {
+                ui.heading("📝 Log");
+                let text_response = ui.text_edit_multiline(&mut self.log.as_str());
+                
+            });
         };
+
     }
 }
 

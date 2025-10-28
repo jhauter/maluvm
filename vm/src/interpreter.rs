@@ -1,6 +1,8 @@
+use std::str::Utf8Error;
+
 use smallvec::SmallVec;
 
-use crate::asm::{self, opcode::{self, StoreArgs}, CODE_START, CODE_START_ADDR_POS};
+use crate::asm::{self, opcode::{self, StoreArgs}, DATA_START, CODE_START_ADDR_POS};
 
 const INITAL_VALUE_STACK_SIZE: usize = 65536 / 4;
 const INITAL_RETURN_STACK_SIZE: usize = 20;
@@ -12,6 +14,7 @@ const MAX_ARGS: usize = 12;
 #[derive(Debug)]
 pub enum InterpreterErrorType {
     IOError(std::io::Error),
+    InvalidStringData(Utf8Error),
     InvalidBytecodeHeader,
     AddrOutOfBounds(u32),
     UnexpectedValStackEmpty,
@@ -21,10 +24,16 @@ pub enum InterpreterErrorType {
     InvalidGlobalId(u8),
     ArgStackFull,
     UnexpectedEmptyFrameStack,
+
 }
 impl From<std::io::Error>  for InterpreterErrorType {
     fn from(value: std::io::Error) -> Self {
         Self::IOError(value)
+    }
+}
+impl From<Utf8Error> for InterpreterErrorType {
+    fn from(value: Utf8Error) -> Self {
+        Self::InvalidStringData(value)
     }
 }
 pub struct Frame {
@@ -39,6 +48,11 @@ impl Frame {
         }
     }
 }
+
+pub trait SyscallHandler {
+    fn on_syscall(&mut self, interpreter: &mut Interpreter, syscall_id: u32, args: &[u32]) -> u32;
+}
+
 pub struct Interpreter {
     pub value_stack: Vec<u32>,
     pub return_stack: Vec<Frame>,
@@ -123,6 +137,14 @@ impl Interpreter {
     interpreter_impl_store!(store_i16, i16);
     interpreter_impl_store!(store_i32, i32);
 
+    pub fn read_str(&mut self, addr: u32, len: u32) -> Result<&str, InterpreterErrorType> {
+        //TODO: Kommuniziere dass addr + länge out of bounds ist
+        let slice = self.memory.get(addr as usize .. addr as usize + len as usize)
+            .ok_or(InterpreterErrorType::AddrOutOfBounds(addr))?;
+            
+        Ok(str::from_utf8(slice)?)
+    } 
+
     pub fn from_bytecode(bytecode: &[u8]) -> Result<Self, InterpreterErrorType> {
         is_bytecode_header_valid(bytecode)?;
 
@@ -139,8 +161,6 @@ impl Interpreter {
 
         Ok(interpreter)
     }
-
-
 
     pub fn init_memory(&mut self, bytecode: &[u8]) {
         self.memory[..bytecode.len() - 4].copy_from_slice(&bytecode[4..]);
@@ -171,7 +191,7 @@ impl Interpreter {
     }
 
     pub fn inital_bytecode(&self) -> &[u8] {
-        &self.memory[CODE_START as usize .. CODE_START as usize + self.bytecode_len as usize]
+        &self.memory[DATA_START as usize .. DATA_START as usize + self.bytecode_len as usize]
     }
 
     pub fn reset_pc(&mut self) {
@@ -312,7 +332,7 @@ impl Interpreter {
         frame.locals[..self.args.len()].copy_from_slice(&self.args);
     }
 
-    pub fn exec_next_op(&mut self) -> Result<(), InterpreterErrorType> {
+    pub fn exec_next_op(&mut self, syscall_handler: &mut impl SyscallHandler) -> Result<(), InterpreterErrorType> {
         let op = self.read_u8(self.pc)?;
         println!("op: {:0x}", op);
         match op {
@@ -558,17 +578,26 @@ impl Interpreter {
                 }
                 Ok(())
             }
+            opcode::Syscall => {
+                let id = self.pop()?;
+                let args = self.args.clone(); 
+                let ret = syscall_handler.on_syscall(self, id, args.as_slice());       
+                self.args.clear(); 
+
+                self.push(ret);
+                Ok(())
+            }
             _ => todo!(),
         }
     }
 
-    pub fn run(&mut self) -> Result<&[u32], InterpreterErrorType> {
+    pub fn run(&mut self, syscall_handler: &mut impl SyscallHandler) -> Result<&[u32], InterpreterErrorType> {
         self.running = true;
         loop {
             if !self.running {
                 break;
             }
-            self.exec_next_op()?;
+            self.exec_next_op(syscall_handler)?;
         }
         Ok(&self.value_stack)
     }
@@ -579,13 +608,19 @@ mod tests {
     use super::*;
     use crate::asm;
 
+    struct DummySyscallHandler();
+    impl SyscallHandler for DummySyscallHandler {
+        fn on_syscall(&mut self, _: &mut Interpreter, _: u32, _: &[u32]) -> u32 {
+            return 0
+        }
+    }
     macro_rules! assert_code_result {
         ($code: expr, $expected: expr) => {
             let bytecode = asm::Parser::parse($code).unwrap();
             assert!(bytecode.code.len() > 0);
             let mut interpreter = Interpreter::from_bytecode(&bytecode.code).unwrap();
 
-            let result = interpreter.run().unwrap();
+            let result = interpreter.run(&mut DummySyscallHandler()).unwrap();
             assert_eq!(result, $expected);
         };
     }

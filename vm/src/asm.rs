@@ -1,4 +1,4 @@
-use crate::interpreter::InterpreterErrorType;
+use crate::interpreter::{Interpreter, InterpreterErrorType};
 use core::fmt::{self, Display};
 use std::{
     collections::HashMap,
@@ -50,8 +50,9 @@ pub const BYTECODE_HEADER: [u8; 4] = [b'm', b'a', b'l', b'u'];
 
 //TODO (joh): This has to be updated manually each time the bytecode header definiton changes.
 //Make this a macro maybe
+
 pub const CODE_START_ADDR_POS: u32 = (2 * size_of::<u32>()) as u32;
-pub const CODE_START: u32 = (3 * size_of::<u32>()) as u32;
+pub const DATA_START: u32 = (4 * size_of::<u32>()) as u32;
 
 pub struct ParseOutput<'src, T> {
     word: T,
@@ -86,7 +87,7 @@ pub mod opcode {
     pub const Gt: u8 = 0x17;
     pub const Lt: u8 = 0x18;
     pub const Ge: u8 = 0x19;
-    pub const Le: u8 = 0x11;
+    pub const Le: u8 = 0x1a;
     pub const Shiftr: u8 = 0x1b;
     pub const Shiftl: u8 = 0x1c;
     pub const And: u8 = 0x1d;
@@ -106,8 +107,9 @@ pub mod opcode {
     pub const End: u8 = 0x2b;
     pub const PushArg: u8 = 0x2c;
     pub const DbgAssert: u8 = 0x2d;
+    pub const Syscall: u8 = 0x2f;
 
-    pub const Names: [&'static str; DbgAssert as usize + 1] = [
+    pub const Names: [&'static str; Syscall as usize] = [
         "dbg_halt",
         "nop", 
         "unreachable", 
@@ -153,7 +155,9 @@ pub mod opcode {
         "load_32_u", 
         "end", 
         "push_arg",
-        "dbg_assert"
+        "dbg_assert",
+        "syscall",
+        
     ];
 
     pub struct StoreArgs {
@@ -172,13 +176,13 @@ pub enum RawArg {
     Num(u32),
 }
 impl RawArg {
-    pub fn from_arg_type(arg: &ArgType<'_>, parser: &Parser) -> Result<Self, AssembleError> {
+    pub fn from_arg_type(arg: &ArgType<'_>, parser: &mut Parser) -> Result<Self, AssembleError> {
         match arg {
             ArgType::AbsLabelRef(l) => Ok(RawArg::Num(parser.get_abs_label_addr(l)? as u32)),
             ArgType::OffLabelRef(l) => Ok(RawArg::Num(parser.get_off_label_addr(l)? as u32)),
             ArgType::Number(n) => Ok(RawArg::Num(*n as u32)),
             ArgType::Register(r) => Ok(RawArg::Register(*r)),
-            ArgType::String(_) => todo!()
+            ArgType::String((_, n)) => Ok(RawArg::Num(*n + DATA_START + parser.op_size_bytes as u32)) 
         }
     }
 
@@ -219,7 +223,7 @@ pub struct RawOp {
     pub arg: Option<RawArg>,
 }
 impl RawOp {
-    pub fn from_op(op: &Op<'_>, parser: &Parser) -> Result<Self, AssembleError> {
+    pub fn from_op(op: &Op<'_>, parser: &mut Parser) -> Result<Self, AssembleError> {
         let opcode = op.opcode;
 
         let arg = op
@@ -262,25 +266,29 @@ pub struct BytecodeInfo {
     pub code_size_bytes: u32,
     pub instruction_count: u32,
     pub code_start_offset: u32,
+    pub lit_data_section_size: u32,
 }
 
 impl BytecodeInfo {
     //NOTE(joh): Maybe use a packed struct?
     pub const fn total_header_size() -> usize {
-        3 * size_of::<u32>() + size_of_val(&BYTECODE_HEADER)
+        4 * size_of::<u32>() + size_of_val(&BYTECODE_HEADER)
     }
     pub fn total_size(&self) -> usize {
-        self.code_size_bytes as usize + Self::total_header_size()
+        self.lit_data_section_size as usize + self.code_size_bytes as usize + Self::total_header_size()
     }
 
     fn to_bytecode(&self) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(self.total_size());
+        
         buffer.extend_from_slice(&BYTECODE_HEADER);
 
         buffer.extend_from_slice(&(self.code_size_bytes).to_le_bytes());
         buffer.extend_from_slice(&(self.instruction_count).to_le_bytes());
         buffer.extend_from_slice(&(self.code_start_offset).to_le_bytes());
+        buffer.extend_from_slice(&(self.lit_data_section_size).to_le_bytes()); 
 
+        
         buffer
     }
 }
@@ -319,6 +327,8 @@ pub struct Parser {
     op_size_bytes: usize,
     line: usize,
     labels: HashMap<String, u32>,
+    string_literals: HashMap<String, u32>, 
+    data: Vec<u8>,
 }
 
 pub struct ParseResult {
@@ -337,6 +347,8 @@ impl<'src> Parser {
             op_count: 0,
             op_size_bytes: 0,
             labels: HashMap::new(),
+            string_literals: HashMap::new(),
+            data: Vec::new() 
         }
     }
 
@@ -371,6 +383,23 @@ impl<'src> Parser {
                 Ok(LabelId(id))
             }
         }
+    }
+
+    pub fn get_string_literal_addr(&mut self, str: &'src str) -> u32 {
+        match self.string_literals.get(str) {
+            Some(addr) => *addr,
+            None => self.push_string_literal(str)
+        }
+    }
+
+    pub fn push_string_literal(&mut self, str: &'src str) -> u32 {
+        let offset = self.data.len();
+
+        self.data.extend_from_slice(&str.len().to_le_bytes());
+        self.data.extend_from_slice(str.as_bytes());
+        self.string_literals.insert(str.to_string(), offset as u32);
+        
+        offset as u32
     }
 
     pub fn parse_elems(&mut self, code: &'src str) -> Result<Box<[Elem<'src>]>, AssembleError> {
@@ -419,7 +448,7 @@ impl<'src> Parser {
         Ok(elems.into())
     }
 
-    pub fn parse_ops(&self, elems: &[Elem<'src>]) -> Result<Box<[RawOp]>, AssembleError> {
+    pub fn parse_ops(&mut self, elems: &[Elem<'src>]) -> Result<Box<[RawOp]>, AssembleError> {
         let mut ops = Vec::with_capacity(self.op_count);
 
         for elem in elems {
@@ -446,24 +475,30 @@ impl<'src> Parser {
             .copied()
     }
 
+    pub fn get_code_start_addr(&self) -> u32 {
+        DATA_START
+    }
+
     pub fn get_abs_label_addr(&self, name: &'src str) -> Result<i32, AssembleError> {
         let label = self.try_get_label(name)?;
-        Ok(label as i32 + CODE_START as i32)
+        Ok(label as i32 + self.get_code_start_addr() as i32)
     }
 
     pub fn get_off_label_addr(&self, name: &'src str) -> Result<i32, AssembleError> {
+        //NOTE: (joh): Ich glaube das ist falsch
         let label = self.try_get_label(name)?;
         Ok(((self.op_size_bytes as isize) - (label as isize)) as i32)
     }
 
     pub fn get_bytecode_info(&self) -> BytecodeInfo {
         let code_start_offset =
-            self.labels.get(ENTRY_LABEL_NAME).copied().unwrap_or(0) as u32 + CODE_START;
+            self.labels.get(ENTRY_LABEL_NAME).copied().unwrap_or(0) as u32 + self.get_code_start_addr();
 
         BytecodeInfo {
             code_size_bytes: self.op_size_bytes as u32,
             instruction_count: self.op_count as u32,
             code_start_offset,
+            lit_data_section_size: self.data.len() as u32,
         }
     }
 
@@ -472,10 +507,11 @@ impl<'src> Parser {
         let mut buffer = info.to_bytecode();
 
         ops.iter().for_each(|o| o.encode(&mut buffer));
+        buffer.extend_from_slice(&self.data);
 
         buffer.into_boxed_slice()
     }
-
+    
     pub fn slice_until(
         &self,
         rest: &'src str,
@@ -512,12 +548,14 @@ impl<'src> Parser {
         self.slice_until(rest, '"')
     }
 
-    pub fn parse_arg(&self, s: &'src str) -> Result<ArgType<'src>, AssembleError> {
+    pub fn parse_arg(&mut self, s: &'src str) -> Result<ArgType<'src>, AssembleError> {
         match s.chars().next().unwrap() {
             '"' => {
                 //TODO (joh): Was ist mit dem Rest?
                 let res = self.parse_string(&s[1..])?; 
-                Ok(ArgType::String(res.word))  
+                let addr = self.get_string_literal_addr(res.word);
+                Ok(ArgType::String((res.word, addr)))
+
             },
             '@' => Ok(ArgType::AbsLabelRef(&s[1..])),
             '.' => Ok(ArgType::OffLabelRef(&s[1..])),
@@ -528,7 +566,7 @@ impl<'src> Parser {
         }
     }
     pub fn arg_register(
-        &self,
+        &mut self,
         args: &mut impl Iterator<Item = &'src str>,
     ) -> Result<ArgType<'src>, AssembleError> {
         let s = args
@@ -550,7 +588,7 @@ impl<'src> Parser {
     }
 
     pub fn arg_const(
-        &self,
+        &mut self,
         args: &mut impl Iterator<Item = &'src str>,
     ) -> Result<ArgType<'src>, AssembleError> {
         let s = args
@@ -559,7 +597,7 @@ impl<'src> Parser {
         Ok(self.parse_arg(s)?)
     }
 
-    pub fn parse_op(&self, s: &'src str) -> Result<(Op<'src>, Option<&'src str>), AssembleError> {
+    pub fn parse_op(&mut self, s: &'src str) -> Result<(Op<'src>, Option<&'src str>), AssembleError> {
         let statement = self.slice_until(s, ';')?;
         let mut op_str = iter_op_args(statement.word);
         macro_rules! op {
@@ -596,7 +634,7 @@ impl<'src> Parser {
                 }
             };
         }
-
+        
         let (opcode, arg): (u8, Option<ArgType<'src>>) = op_p!(
             (DbgHalt, None),
             (Nop, None),
@@ -675,7 +713,7 @@ pub fn iter_op_args(str: &str) -> impl Iterator<Item = &str> {
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum ArgType<'src> {
-    String(&'src str),
+    String((&'src str, u32)),
     AbsLabelRef(&'src str),
     OffLabelRef(&'src str),
     Number(i32),
@@ -700,7 +738,7 @@ impl<'src> Display for ArgType<'src> {
             ArgType::OffLabelRef(label) => write!(f, ".{label}"),
             ArgType::Number(num) => write!(f, "{num}"),
             ArgType::Register(num) => write!(f, "{num}"),
-            ArgType::String(s) => write!(f, "\"{s}\""),
+            ArgType::String((s, addr)) => write!(f, "\"{s}\"(@0x{:04x})", addr),
         }
     }
 }
@@ -786,7 +824,7 @@ mod tests {
 
     #[test]
     fn parse_single_op() {
-        let s = Parser::new();
+        let mut s = Parser::new();
         assert_eq!(s.parse_op("nop;").unwrap().0, op!(Nop));
         assert_eq!(
             s.parse_op("local_get 5;").unwrap().0,
@@ -879,7 +917,9 @@ mod tests {
         "#;
         let mut parser = Parser::new();
         let elems = parser.parse_elems(code).unwrap();
-        assert!(matches!(elems[0], Elem::Const(ArgType::String("hallo welt"))));
+        assert!(matches!(elems[0], Elem::Const(ArgType::String(("hallo welt", _)))));
         assert!(matches!(elems[1], Elem::Const(ArgType::Number(5))));
     }
+
+
 }

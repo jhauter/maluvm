@@ -38,7 +38,7 @@ impl Editor {
         };
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add(
+            ui.add_sized(ui.available_size(),
                 egui::TextEdit::multiline(&mut self.code)
                     .font(egui::TextStyle::Monospace)
                     .hint_text("Enter your code here")
